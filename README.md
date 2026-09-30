@@ -9,7 +9,11 @@ Aplicacao desktop com interface grafica (CustomTkinter) para download de video e
 - Opcao de adicionar ao MP3 a capa e os dados disponiveis na plataforma
 - Busca guiada de artista, faixa, album, ano e capa quando um MP3 termina sem dados completos
 - Aceita links HTTP/HTTPS e delega a compatibilidade de cada plataforma ao yt-dlp
-- Deteccao automatica de playlists do YouTube
+- Deteccao automatica de playlists do YouTube, com escolha dos itens antes de baixar
+- Playlist retomavel: o que ja foi baixado fica registrado e vem desmarcado na proxima vez
+- MP3 com o nome da musica (`Every Breath You Take.mp3`, sem artista nem "(Official Video)"); a ordem da
+  playlist fica no numero da faixa
+- Botao de cancelar que preserva o que ja terminou
 - Barra de progresso em tempo real
 - Downloads organizados automaticamente em pastas separadas
 - Interface grafica moderna e responsiva
@@ -31,8 +35,9 @@ Do sistema:
   sem ele o download parece progredir e falha na conversao.
 - **Tk** — o Tkinter acompanha o Python no Windows e no macOS, mas em varias distribuicoes Linux e um
   pacote separado (`tk` no Arch, `python3-tk` no Debian e Ubuntu). Sem ele a janela nao abre.
-- **[Deno](https://deno.com/)** — opcional. Alguns extratores do yt-dlp usam um runtime JavaScript; sem ele
-  o download normalmente funciona, apenas com um aviso de que certos formatos podem faltar.
+- **Um runtime JavaScript** — [Deno](https://deno.com/) (preferido), Node ou Bun. Desde o yt-dlp 2025.11 o
+  YouTube exige um para liberar os formatos; o app usa o primeiro que encontrar no `PATH`. Sem nenhum, o
+  YouTube entrega poucos formatos ou nenhum. `./run.sh --verificar` mostra qual foi escolhido.
 
 Do Python, instaladas por `requirements.txt`:
 
@@ -105,12 +110,18 @@ media-downloader/
 │       ├── metadata.py         # catalogo do iTunes e tags do arquivo
 │       ├── downloader.py       # download e relato de falhas
 │       ├── widgets.py          # widgets reutilizaveis
+│       ├── review.py           # revisao de metadata
+│       ├── selection.py        # escolha dos itens da playlist
 │       └── window.py           # janela principal
 ├── tests/
 │   ├── test_url.py
 │   ├── test_caminhos.py
 │   ├── test_download_manager.py
+│   ├── test_playlist.py
 │   ├── test_music_metadata.py
+│   ├── test_metadata_automatica.py
+│   ├── test_selecao.py
+│   ├── test_contraste.py
 │   └── test_ui_controls.py
 ├── assets/
 │   ├── media-downloader-icon.svg
@@ -147,9 +158,15 @@ o quadro do video na importacao.
 
 Esses itens ficam separados das falhas de download. Para cada um, a tela mostra a previa do que ja esta
 gravado no arquivo (capa e artista) e um botao de busca. A busca usa a API do iTunes: cada resultado ja
-vem com faixa, artista, album, ano e a capa do album. Escolha um para importar. Nada e gravado sem essa
-escolha — a leitura do titulo serve apenas para formular a busca. Em playlists, cada item pendente fica
-listado individualmente.
+vem com faixa, artista, album, ano e a capa do album. Escolha um para importar. Em playlists, cada item
+pendente fica listado individualmente.
+
+Com **Aplicar sozinho** marcado (vem marcado junto com a opcao de metadata), o app busca no catalogo ao fim
+do download e grava sem perguntar apenas quando artista, titulo e duracao (ate 5 s de diferenca) batem
+juntos. Versao ao vivo, remix ou acustica nunca conta como a mesma faixa. O que ficar em duvida — titulo sem
+"Artista - Musica", clipe com introducao longa, varios resultados parecidos — vai para a revisao. Em
+playlist, a posicao do item tambem vira o numero da faixa. Desmarcada a opcao, nada e gravado sem a sua
+escolha.
 
 O catalogo do iTunes e comercial: cobre bem o que esta a venda nas lojas e nao encontra bootleg,
 lancamento independente fora das plataformas ou gravacao rara.

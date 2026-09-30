@@ -2,15 +2,32 @@
 
 import queue
 import re
+import shutil
+import threading
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
+from yt_dlp.postprocessor.metadataparser import MetadataParserPP
+from yt_dlp.utils import DownloadCancelled
 
 from .config import DOWNLOAD_FOLDERS
-from .metadata import MusicMetadataService, metadata_review_reasons, suggest_music_search
-from .models import DownloadSummary, MetadataPendingItem, MusicMetadataCandidate
+from .metadata import (
+    MusicMetadataService,
+    confident_match,
+    metadata_review_reasons,
+    rename_to_song,
+    search_suggestion,
+    song_title,
+)
+from .models import (
+    DownloadSummary,
+    MetadataPendingItem,
+    MusicMetadataCandidate,
+    PlaylistEntry,
+)
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
@@ -34,6 +51,12 @@ def summary_lines(summary: DownloadSummary) -> list[str]:
         f"--  {failed} item(s) com falha",
         f"--  {pending} MP3 com metadata a confirmar",
     ]
+    if summary.metadata_auto_applied:
+        lines.append(
+            f"OK  {len(summary.metadata_auto_applied)} MP3 com metadata aplicada automaticamente")
+    if summary.already_downloaded_count:
+        lines.append(
+            f"==  {summary.already_downloaded_count} item(s) ja baixado(s) antes, ignorado(s)")
     if failed:
         lines += ["", "Itens com falha:"]
         lines += [f"  - {item}" for item in summary.failed_items[:FAILURES_SHOWN]]
@@ -45,6 +68,97 @@ def summary_lines(summary: DownloadSummary) -> list[str]:
     if pending:
         lines += ["", f"A revisao abre em seguida, com {pending} item(s) para confirmar."]
     return lines
+
+
+# Um por pasta de destino: o MP3 de um video nao pode impedir o MP4 dele.
+ARCHIVE_FILENAME = ".historico-de-downloads.txt"
+
+# Desde o yt-dlp 2025.11 o YouTube exige um runtime de JavaScript, e so o deno
+# vem ligado por padrao: com node instalado e sem deno, o yt-dlp nem tentava.
+_JS_RUNTIME_PREFERENCE = ("deno", "node", "bun")
+
+
+def js_runtimes_for(which: Callable[[str], str | None]) -> dict[str, dict[str, str]]:
+    for name in _JS_RUNTIME_PREFERENCE:
+        path = which(name)
+        if path:
+            return {name: {"path": path}}
+    return {"deno": {}}
+
+
+def _retry_sleep(attempt: int) -> float:
+    return min(2 ** attempt, 30)
+
+
+def _archive_id(entry: dict[str, Any]) -> str | None:
+    """Mesma chave que o yt-dlp grava no historico (`_make_archive_id`)."""
+    extractor = entry.get("extractor_key") or entry.get("ie_key")
+    video_id = entry.get("id")
+    if not (extractor and video_id):
+        return None
+    return f"{extractor.lower()} {video_id}"
+
+
+def archive_ids(path: Path) -> set[str]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return set()
+    return {line.strip() for line in lines if line.strip()}
+
+
+def forget_archived(path: Path, ids: set[str]) -> None:
+    if not ids or not path.is_file():
+        return
+    kept = [
+        line for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and line.strip() not in ids
+    ]
+    path.write_text("".join(f"{line}\n" for line in kept), encoding="utf-8")
+
+
+def playlist_entries(info: dict[str, Any], archived: set[str]) -> list[PlaylistEntry]:
+    """Linhas da escolha, numeradas pela posicao que o `playlist_items` entende.
+
+    O `None` que o ignoreerrors deixa no lugar de um item quebrado ainda ocupa a
+    posicao: pular a contagem ali desalinharia todos os indices seguintes.
+    """
+    rows = []
+    for index, entry in enumerate(info.get("entries") or [], start=1):
+        if not entry:
+            continue
+        archive_id = _archive_id(entry)
+        rows.append(PlaylistEntry(
+            index=index,
+            title=entry.get("title") or entry.get("id") or f"Item {index}",
+            archive_id=archive_id,
+            duration=entry.get("duration"),
+            already_downloaded=archive_id in archived,
+        ))
+    return rows
+
+
+def playlist_items_spec(indices: list[int]) -> str:
+    return ",".join(str(index) for index in sorted(set(indices)))
+
+
+@dataclass(frozen=True)
+class _PlaylistListing:
+    """Playlist listada que espera a escolha da pessoa para comecar."""
+    url: str
+    file_format: str
+    include_metadata: bool
+    auto_metadata: bool
+    target_dir: Path
+    entries: tuple[PlaylistEntry, ...]
+
+
+def _source_artist(info: dict[str, Any]) -> str | None:
+    """Artista que a origem publicou — nunca o canal, que e provisorio."""
+    if info.get("artist"):
+        return info["artist"]
+    artists = info.get("artists") or []
+    return artists[0] if artists else None
 
 
 class ReportingLogger:
@@ -90,10 +204,20 @@ class DownloadManager:
     ):
         self._q = event_queue
         self._metadata_service = metadata_service or MusicMetadataService()
+        self._cancel = threading.Event()
+        self._listing: _PlaylistListing | None = None
+        self._finished_files: list[tuple[str, Path]] = []
+
+    def cancel(self) -> None:
+        """Pede a interrupcao; o yt-dlp para no proximo aviso de progresso."""
+        self._cancel.set()
+
+    def _reset_cancel(self) -> None:
+        self._cancel.clear()
 
     def search_metadata(self, pending_item: MetadataPendingItem) -> None:
         try:
-            suggestion = suggest_music_search(pending_item.title)
+            suggestion = search_suggestion(pending_item)
             candidates = self._metadata_service.search(suggestion)
             self._emit(
                 "metadata_results", pending_item=pending_item, candidates=candidates,
@@ -101,13 +225,25 @@ class DownloadManager:
         except Exception as exc:
             self._emit("metadata_search_error", pending_item=pending_item, message=str(exc))
 
+    def _apply_candidate(
+        self, pending_item: MetadataPendingItem, candidate: MusicMetadataCandidate,
+    ) -> bool:
+        """Grava as tags e da ao arquivo o nome oficial da faixa."""
+        path = Path(pending_item.file_path)
+        cover_embedded = self._metadata_service.apply_to_mp3(path, candidate)
+        try:
+            rename_to_song(path, candidate.title)
+        except OSError:
+            # As tags ja estao gravadas, que e o que a pessoa confirmou; o nome
+            # antigo e so menos bonito, nao um arquivo errado.
+            pass
+        return cover_embedded
+
     def apply_metadata(
         self, pending_item: MetadataPendingItem, candidate: MusicMetadataCandidate,
     ) -> None:
         try:
-            cover_embedded = self._metadata_service.apply_to_mp3(
-                Path(pending_item.file_path), candidate,
-            )
+            cover_embedded = self._apply_candidate(pending_item, candidate)
             self._emit(
                 "metadata_applied",
                 pending_item=pending_item,
@@ -137,39 +273,171 @@ class DownloadManager:
         except Exception:
             self._emit("metadata_cover_unavailable", candidate=candidate)
 
-    def download(self, url: str, file_format: str, include_metadata: bool = False) -> None:
-        summary = DownloadSummary()
+    def download(
+        self, url: str, file_format: str,
+        include_metadata: bool = False, auto_metadata: bool = False,
+    ) -> None:
+        """Item unico baixa direto; playlist lista e espera `download_selected`."""
+        self._reset_cancel()
+        self._listing = None
         try:
             playlist_mode = self._url_is_playlist(url)
             info = self._extract_info(url, playlist_mode)
 
             if playlist_mode and not self._is_playlist_result(info):
                 playlist_mode = False
+            if self._cancel.is_set():
+                # Listagem de playlist grande demora; quem cancelou nela nao
+                # espera ver o dialogo de escolha abrir em seguida.
+                self._emit("cancelled", summary=DownloadSummary(playlist_mode=playlist_mode))
+                return
 
             target_dir = self._ensure_output_dir(file_format, playlist_mode)
-            summary.target_dir = str(target_dir)
-            summary.playlist_mode = playlist_mode
-            summary.total_items = self._count_items(info, playlist_mode)
+            if playlist_mode:
+                entries = playlist_entries(info, archive_ids(target_dir / ARCHIVE_FILENAME))
+                self._listing = _PlaylistListing(
+                    url, file_format, include_metadata, auto_metadata,
+                    target_dir, tuple(entries),
+                )
+                self._emit(
+                    "playlist_listed",
+                    title=info.get("title") or "Playlist",
+                    entries=entries,
+                )
+                return
+        except Exception as exc:
+            self._emit("error", message=str(exc))
+            return
 
-            label = "colecao" if playlist_mode else "midia"
+        self._run(
+            url, file_format, include_metadata, auto_metadata,
+            DownloadSummary(target_dir=str(target_dir), total_items=1),
+        )
+
+    def download_selected(self, indices: list[int]) -> None:
+        listing, self._listing = self._listing, None
+        chosen = set(indices)
+        if listing is None or not chosen:
+            self._emit("error", message="Nenhum item da playlist foi escolhido.")
+            return
+        self._reset_cancel()
+
+        selected = [entry for entry in listing.entries if entry.index in chosen]
+        # Pedir de novo o que ja foi baixado e intencional: sem esquecer, o
+        # historico faria o yt-dlp pular o item em silencio.
+        try:
+            forget_archived(
+                listing.target_dir / ARCHIVE_FILENAME,
+                {e.archive_id for e in selected if e.already_downloaded and e.archive_id},
+            )
+        except OSError as exc:
+            self._emit("error", message=f"Nao foi possivel atualizar o historico: {exc}")
+            return
+
+        summary = DownloadSummary(
+            target_dir=str(listing.target_dir),
+            playlist_mode=True,
+            total_items=len(selected),
+            already_downloaded_count=sum(
+                1 for e in listing.entries
+                if e.already_downloaded and e.index not in chosen),
+        )
+        self._run(
+            listing.url, listing.file_format, listing.include_metadata,
+            listing.auto_metadata, summary, playlist_items=playlist_items_spec(indices),
+        )
+
+    def discard_listing(self) -> None:
+        self._listing = None
+
+    def _run(
+        self, url: str, file_format: str, include_metadata: bool, auto_metadata: bool,
+        summary: DownloadSummary, playlist_items: str | None = None,
+    ) -> None:
+        try:
+            label = "colecao" if summary.playlist_mode else "midia"
             self._emit("status", message=f"Preparando download ({label})...")
             self._emit(
                 "meta",
                 total_items=summary.total_items,
-                playlist_mode=playlist_mode,
-                target_dir=str(target_dir),
+                playlist_mode=summary.playlist_mode,
+                target_dir=summary.target_dir,
             )
 
             opts = self._build_opts(
-                target_dir, file_format, playlist_mode, summary, include_metadata,
+                Path(summary.target_dir), file_format, summary.playlist_mode,
+                summary, include_metadata,
             )
+            if playlist_items:
+                opts["playlist_items"] = playlist_items
+            self._finished_files = []
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
 
+            if file_format == "mp3":
+                self._rename_downloads(summary, self._finished_files)
+            if include_metadata and auto_metadata:
+                self._auto_apply_metadata(summary)
+            if self._cancel.is_set():
+                raise DownloadCancelled("Download cancelado.")
+
             self._reconcile_failure_reports(summary)
             self._emit("done", summary=summary)
+        except DownloadCancelled:
+            self._emit("cancelled", summary=summary)
         except Exception as exc:
             self._emit("error", message=str(exc))
+
+    def _record_final_file(self, data: dict[str, Any]) -> None:
+        """Guarda onde cada arquivo terminou, depois de convertido e movido."""
+        if data.get("status") != "finished" or data.get("postprocessor") != "MoveFilesAfterDownload":
+            return
+        info = data.get("info_dict") or {}
+        if info.get("filepath"):
+            entry = (info.get("title") or "", Path(info["filepath"]))
+            if entry not in self._finished_files:
+                self._finished_files.append(entry)
+
+    def _rename_downloads(
+        self, summary: DownloadSummary, files: list[tuple[str, Path]],
+    ) -> None:
+        """Da a cada MP3 o nome da musica e leva as pendencias junto."""
+        moved: dict[str, str] = {}
+        for title, path in files:
+            try:
+                moved[str(path)] = str(rename_to_song(path, song_title(title or path.stem)))
+            except OSError:
+                continue
+        summary.metadata_pending_items = [
+            replace(item, file_path=moved.get(item.file_path, item.file_path))
+            for item in summary.metadata_pending_items
+        ]
+
+    def _auto_apply_metadata(self, summary: DownloadSummary) -> None:
+        """Aplica o candidato seguro de cada pendencia; o resto segue para a revisao."""
+        pending = summary.metadata_pending_items
+        remaining: list[MetadataPendingItem] = []
+        for position, item in enumerate(pending, start=1):
+            if self._cancel.is_set():
+                remaining.extend(pending[position - 1:])
+                break
+            self._emit(
+                "status",
+                message=f"Conferindo metadata no catalogo ({position}/{len(pending)})...")
+            try:
+                candidate = confident_match(
+                    item, self._metadata_service.search(search_suggestion(item)))
+                if candidate is not None:
+                    self._apply_candidate(item, candidate)
+            except Exception:
+                # Catalogo fora do ar em um item nao e falha de download: o item
+                # so continua pendente, como estaria sem a aplicacao automatica.
+                candidate = None
+            if candidate is None:
+                remaining.append(item)
+            else:
+                summary.metadata_auto_applied.append(f"{candidate.artist} — {candidate.title}")
+        summary.metadata_pending_items = remaining
 
     @staticmethod
     def _url_is_playlist(url: str) -> bool:
@@ -179,15 +447,23 @@ class DownloadManager:
         except Exception:
             return False
 
+    @staticmethod
+    def _base_opts() -> dict[str, Any]:
+        """O que a listagem e o download precisam igual para falar com o YouTube."""
+        return {
+            "quiet": True,
+            "ignoreerrors": True,
+            "remote_components": ["ejs:github"],
+            "js_runtimes": js_runtimes_for(shutil.which),
+        }
+
     def _extract_info(self, url: str, playlist_mode: bool) -> dict[str, Any]:
         self._emit("status", message="Analisando link...")
         opts = {
-            "quiet": True,
+            **self._base_opts(),
             "skip_download": True,
             "extract_flat": "in_playlist",
             "noplaylist": not playlist_mode,
-            "ignoreerrors": True,
-            "remote_components": ["ejs:github"],
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -209,17 +485,31 @@ class DownloadManager:
             outtmpl = str(target_dir / "%(title)s.%(ext)s")
 
         opts: dict[str, Any] = {
-            "outtmpl": outtmpl,
-            "ignoreerrors": True,
+            **self._base_opts(),
+            # A capa da propria playlist nao e de nenhuma faixa: gravada, sobrava
+            # solta na pasta como "000 - Nome da playlist.jpg".
+            "outtmpl": {"default": outtmpl, "pl_thumbnail": ""},
             "noplaylist": not playlist_mode,
             "progress_hooks": [self._make_progress_hook(summary, include_metadata)],
-            "quiet": True,
+            "postprocessor_hooks": [self._record_final_file],
             "no_warnings": True,
             "no_color": True,
             "concurrent_fragment_downloads": 1,
             "logger": ReportingLogger(self._q, summary),
-            "remote_components": ["ejs:github"],
+            # Sem isto o yt-dlp procura o .webm que a conversao ja apagou e
+            # baixa de novo um MP3 que esta na pasta.
+            "final_ext": file_format,
+            "retry_sleep_functions": {"http": _retry_sleep, "fragment": _retry_sleep},
         }
+        if playlist_mode:
+            # Playlist grande em rajada e o que leva o YouTube a pedir login
+            # "para confirmar que nao e um robo".
+            opts.update({
+                "download_archive": str(target_dir / ARCHIVE_FILENAME),
+                "sleep_interval_requests": 1,
+                "sleep_interval": 2,
+                "max_sleep_interval": 5,
+            })
 
         if file_format == "mp3":
             postprocessors = [{
@@ -227,6 +517,15 @@ class DownloadManager:
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
             }]
+            if include_metadata and playlist_mode:
+                postprocessors.append({
+                    "key": "MetadataParser",
+                    "when": "pre_process",
+                    "actions": [(
+                        MetadataParserPP.Actions.INTERPRET,
+                        "playlist_index", "%(track_number)s",
+                    )],
+                })
             if include_metadata:
                 postprocessors += [
                     {"key": "FFmpegMetadata", "add_metadata": True},
@@ -251,10 +550,11 @@ class DownloadManager:
         metadata_seen: set[str] = set()
 
         def hook(data: dict[str, Any]) -> None:
+            if self._cancel.is_set():
+                raise DownloadCancelled("Download cancelado.")
             status = data.get("status")
             info_dict = data.get("info_dict") or {}
             title = info_dict.get("title") or data.get("filename") or "Arquivo"
-            idx = info_dict.get("playlist_index")
 
             if status == "downloading":
                 dl = data.get("downloaded_bytes", 0)
@@ -266,7 +566,10 @@ class DownloadManager:
                 else:
                     overall = item_pct
 
-                suffix = f" ({idx}/{summary.total_items})" if idx and summary.total_items > 1 else ""
+                # Contagem do que foi escolhido, nao a posicao na playlist: com
+                # parte dela escolhida, "30/2" nao diz quanto falta.
+                current = min(summary.downloaded_count + 1, summary.total_items)
+                suffix = f" ({current}/{summary.total_items})" if summary.total_items > 1 else ""
                 self._emit("progress", progress=max(0.0, min(overall, 100.0)),
                            message=f"Baixando: {title}{suffix}")
 
@@ -284,6 +587,8 @@ class DownloadManager:
                             title=title,
                             file_path=str(Path(filename).with_suffix(".mp3")) if filename else "",
                             review_reasons=review_reasons,
+                            duration=info_dict.get("duration"),
+                            source_artist=_source_artist(info_dict),
                         ))
                 overall = (summary.downloaded_count / summary.total_items * 100
                            if summary.total_items else 100.0)
@@ -300,12 +605,6 @@ class DownloadManager:
     @staticmethod
     def _is_playlist_result(info: dict[str, Any]) -> bool:
         return bool(info.get("entries")) or info.get("_type") == "playlist"
-
-    @staticmethod
-    def _count_items(info: dict[str, Any], playlist_mode: bool) -> int:
-        if not playlist_mode:
-            return 1
-        return max(sum(1 for e in (info.get("entries") or []) if e), 1)
 
     @staticmethod
     def _reconcile_failure_reports(summary: DownloadSummary) -> None:

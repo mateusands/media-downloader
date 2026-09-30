@@ -1,6 +1,6 @@
 # Piso de versao: as plataformas mudam e versao antiga passa a receber
 # HTTP 403 sem nada ter mudado no codigo.
-yt-dlp>=2026.8.19
+yt-dlp[default]>=2026.8.19
 customtkinter
 mutagen
 pillow

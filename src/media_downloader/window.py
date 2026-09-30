@@ -38,15 +38,18 @@ from .theme import (
     FONT_FAMILY,
 )
 from .review import MetadataReview
+from .selection import PlaylistSelection
 from .widgets import FormatCard, HoverButton
 
 class MediaDownloaderApp:
-    _W, _H = 860, 760
+    # Altura medida pelo conteudo: abaixo disso a secao de progresso sai da
+    # janela, e e ela que diz se o download andou.
+    _W, _H = 860, 890
 
     def __init__(self, root: ctk.CTk):
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.minsize(740, 700)
+        self.root.minsize(740, 880)
         self.root.configure(fg_color=BG_DARK)
         self._app_icon = tk.PhotoImage(file=str(APP_ICON_PATH))
         self._header_icon = self._app_icon.subsample(8, 8)
@@ -58,6 +61,8 @@ class MediaDownloaderApp:
         self._manager = DownloadManager(self._q)
         self._thread: threading.Thread | None = None
         self._review = MetadataReview(self.root, self._manager)
+        self._selection = PlaylistSelection(
+            self.root, self._download_selected, self._selection_cancelled)
 
         self._build_ui()
         self._center(self._W, self._H)
@@ -120,7 +125,7 @@ class MediaDownloaderApp:
 
     def _divider(self, parent) -> None:
         ctk.CTkFrame(parent, fg_color=CLR_BORDER, height=1, corner_radius=0).pack(
-            fill="x", pady=16)
+            fill="x", pady=12)
 
     # ── URL Section ───────────────────────────────────────────────────────────
 
@@ -261,7 +266,22 @@ class MediaDownloaderApp:
                   "Títulos no formato Artista - Musica podem ajudar depois."),
             font=(FONT_FAMILY, 10), text_color=CLR_MUTED,
         ).pack(anchor="w", pady=(3, 0))
+
+        self.auto_metadata_var = ctk.BooleanVar(value=True)
+        self.auto_metadata_checkbox = ctk.CTkCheckBox(
+            parent,
+            text=("Aplicar sozinho quando artista, titulo e duracao baterem com o catalogo "
+                  "— o que ficar em duvida vai para a revisao"),
+            variable=self.auto_metadata_var,
+            onvalue=True, offvalue=False,
+            font=(FONT_FAMILY, 11), text_color=CLR_TEXT,
+            fg_color=CLR_ACCENT, hover_color=CLR_ACCENT_DARK,
+            border_color=CLR_BORDER, checkmark_color=CLR_TEXT,
+            checkbox_width=20, checkbox_height=20,
+        )
+        self.auto_metadata_checkbox.pack(anchor="w", padx=(28, 0), pady=(8, 0))
         self.format_var.trace_add("write", lambda *_: self._update_metadata_option())
+        self.include_metadata_var.trace_add("write", lambda *_: self._update_metadata_option())
         self._update_metadata_option()
 
     # ── Button Section ────────────────────────────────────────────────────────
@@ -288,6 +308,16 @@ class MediaDownloaderApp:
             command=self.open_downloads_folder,
         )
         self.folder_btn.pack(side="left")
+
+        self.cancel_btn = HoverButton(
+            row, text="Cancelar",
+            font=(FONT_FAMILY, 12),
+            base_color="transparent", hover_color=BG_HOVER, press_color=CLR_BORDER,
+            text_color=CLR_TEXT, border_width=2, border_color=CLR_BORDER,
+            width=140, height=44, state="disabled",
+            command=self.cancel_download,
+        )
+        self.cancel_btn.pack(side="left", padx=(12, 0))
 
     # ── Progress Section ──────────────────────────────────────────────────────
 
@@ -361,12 +391,35 @@ class MediaDownloaderApp:
         self._status_label.configure(text_color=CLR_TEXT)
         self.info_var.set("Analisando link...")
 
-        self._thread = threading.Thread(
-            target=self._manager.download,
-            args=(url, self.format_var.get(), self.include_metadata_var.get()),
-            daemon=True,
+        self._start_worker(
+            self._manager.download,
+            url, self.format_var.get(), self.include_metadata_var.get(),
+            self.auto_metadata_var.get(),
         )
+
+    def _start_worker(self, target, *args) -> None:
+        self._thread = threading.Thread(target=target, args=args, daemon=True)
         self._thread.start()
+
+    def cancel_download(self) -> None:
+        if self._selection.is_open():
+            self._selection.cancel()
+            return
+        self._manager.cancel()
+        self.cancel_btn.configure(state="disabled")
+        self.status_var.set("Cancelando — termina o item atual e para...")
+
+    def _download_selected(self, indices: list[int]) -> None:
+        self.status_var.set("Iniciando...")
+        self._start_worker(self._manager.download_selected, indices)
+
+    def _selection_cancelled(self) -> None:
+        self._manager.discard_listing()
+        self._set_busy(False)
+        self.progress_bar.set(0)
+        self.pct_var.set("0%")
+        self.status_var.set("Download cancelado antes de comecar.")
+        self.info_var.set("Nenhum item foi baixado.")
 
     def _reset_url_hint(self):
         self._url_hint.configure(
@@ -425,6 +478,27 @@ class MediaDownloaderApp:
                 self._pct_label.configure(text_color=CLR_GREEN)
                 self._status_label.configure(text_color=CLR_GREEN)
             self._show_summary(summary)
+
+        elif etype == "playlist_listed":
+            entries = event.get("entries", [])
+            self.status_var.set(f"Playlist com {len(entries)} item(s) — escolha o que baixar.")
+            self._selection.open(event.get("title", "Playlist"), entries)
+
+        elif etype == "cancelled":
+            summary = event["summary"]
+            self._set_busy(False)
+            self._pct_label.configure(text_color=CLR_MUTED)
+            self._status_label.configure(text_color=CLR_TEXT)
+            if summary.total_items:
+                self.status_var.set(
+                    f"Cancelado — {summary.downloaded_count} de {summary.total_items} "
+                    "item(s) baixado(s) antes de parar.")
+                self.info_var.set(f"Destino: {summary.target_dir}")
+            else:
+                self.status_var.set("Download cancelado antes de comecar.")
+                self.info_var.set("Nenhum item foi baixado.")
+            if summary.metadata_pending_items:
+                self._review.open(summary.metadata_pending_items)
 
         elif etype == "error":
             self._set_busy(False)
@@ -503,8 +577,10 @@ class MediaDownloaderApp:
         self.url_entry.configure(state=state)
         self.paste_btn.configure(state=state)
         self.folder_btn.configure(state=state)
+        self.cancel_btn.configure(state="normal" if busy else "disabled")
         if busy:
             self.metadata_checkbox.configure(state="disabled")
+            self.auto_metadata_checkbox.configure(state="disabled")
         else:
             self._update_metadata_option()
 
@@ -512,8 +588,16 @@ class MediaDownloaderApp:
         if self.format_var.get() == "mp3":
             self.metadata_checkbox.configure(state="normal", text_color=CLR_TEXT)
         else:
-            self.include_metadata_var.set(False)
+            # So grava quando muda: o trace desta variavel chama esta funcao, e
+            # o Tk dispara o trace a cada escrita, mesmo de valor igual.
+            if self.include_metadata_var.get():
+                self.include_metadata_var.set(False)
             self.metadata_checkbox.configure(state="disabled", text_color=CLR_MUTED)
+        # A aplicacao automatica so existe dentro da opcao de metadata.
+        if self.include_metadata_var.get():
+            self.auto_metadata_checkbox.configure(state="normal", text_color=CLR_TEXT)
+        else:
+            self.auto_metadata_checkbox.configure(state="disabled", text_color=CLR_MUTED)
 
     @staticmethod
     def _valid_url(url: str) -> bool:
