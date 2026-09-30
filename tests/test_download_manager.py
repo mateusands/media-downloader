@@ -5,15 +5,15 @@ CONTRATO
   Depois de `_extract_info`, o `DownloadManager` precisa decidir duas coisas a
   partir de um dicionário que o yt-dlp devolve num formato variável:
   `_is_playlist_result(info)` — o que veio é mesmo uma playlist?
-  `_count_items(info, playlist_mode)` — quantos itens serão baixados?
+  (Quantos itens serão baixados agora é a escolha da pessoa; a numeração que
+  respeita os buracos vive em `playlist_entries`, coberta em test_playlist.py.)
   E o `ReportingLogger` traduz a saída do yt-dlp em duas listas distintas:
   `summary.failed_items` (erro) e `summary.extractor_notices` (aviso), que o
   resumo final reconcilia com os itens efetivamente baixados.
 
 POR QUE EXISTE
   `ignoreerrors: True` faz o yt-dlp CONTINUAR a playlist quando um item falha e
-  colocar `None` no lugar da entrada quebrada. Sem isso, `_count_items` contaria
-  buracos como itens e o resumo final mentiria para o usuário. O modo playlist
+  colocar `None` no lugar da entrada quebrada — um buraco, não um item. O modo playlist
   também é reavaliado aqui: a URL pode parecer playlist e o resultado vir único.
   Além disso, o yt-dlp pode registrar diagnóstico técnico como erro e ainda
   concluir o download; sem reconciliação, o resumo mostra uma falha falsa.
@@ -23,7 +23,6 @@ POR QUE EXISTE
 
 REGRA DE NEGÓCIO
   - Entrada `None` numa playlist é buraco, não item.
-  - A contagem nunca é zero (mínimo 1), senão a barra de progresso divide por zero.
   - Falha repetida não é listada duas vezes no resumo.
   - Aviso do extrator não é item que falhou. O alerta de runtime JavaScript
     ausente aparece em download que conclui inteiro; contá-lo como falha fazia
@@ -49,7 +48,6 @@ from media_downloader.downloader import (
 from media_downloader.models import DownloadSummary, MetadataPendingItem
 
 eh_playlist_resultado = DownloadManager._is_playlist_result
-contar = DownloadManager._count_items
 
 
 class TestClassificacaoDoResultado:
@@ -65,25 +63,6 @@ class TestClassificacaoDoResultado:
     def test_nao_deve_ser_playlist_quando_entries_vem_vazio(self):
         # Caso real: URL de playlist que resolveu para um item só.
         assert eh_playlist_resultado({"entries": []}) is False
-
-
-class TestContagemDeItens:
-    def test_deve_contar_um_quando_nao_e_modo_playlist(self):
-        assert contar({"entries": [1, 2, 3]}, playlist_mode=False) == 1
-
-    def test_deve_contar_as_entradas_quando_e_modo_playlist(self):
-        assert contar({"entries": [{"id": "a"}, {"id": "b"}]}, playlist_mode=True) == 2
-
-    def test_nao_deve_contar_entradas_nulas_deixadas_por_ignoreerrors(self):
-        info = {"entries": [{"id": "a"}, None, {"id": "b"}, None]}
-        assert contar(info, playlist_mode=True) == 2
-
-    def test_deve_contar_pelo_menos_um_quando_todas_as_entradas_falharam(self):
-        # Proteção contra divisão por zero no cálculo de progresso.
-        assert contar({"entries": [None, None]}, playlist_mode=True) == 1
-
-    def test_deve_contar_pelo_menos_um_quando_nao_ha_entries(self):
-        assert contar({}, playlist_mode=True) == 1
 
 
 class TestRelatoDeFalhas:

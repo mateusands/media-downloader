@@ -3,6 +3,7 @@
 import json
 import re
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlencode
@@ -25,12 +26,17 @@ _PROMOTIONAL_SUFFIX = re.compile(
 )
 
 
+# Hifen, meia-risca e travessao: o clipe oficial do Queen usa "–".
+_ARTIST_SEPARATOR = re.compile(r"\s+[-–—]\s+")
+
+
 def suggest_music_search(source_title: str) -> MusicSearchSuggestion:
     """Cria uma consulta de catálogo sem transformar inferência em metadata."""
     cleaned = _PROMOTIONAL_SUFFIX.sub("", source_title).strip()
-    if " - " not in cleaned:
+    parts = _ARTIST_SEPARATOR.split(cleaned, maxsplit=1)
+    if len(parts) < 2:
         return MusicSearchSuggestion(title=cleaned)
-    artist, title = (part.strip() for part in cleaned.split(" - ", 1))
+    artist, title = (part.strip() for part in parts)
     if artist and title:
         return MusicSearchSuggestion(title=title, artist=artist)
     return MusicSearchSuggestion(title=cleaned)
@@ -190,3 +196,130 @@ class MusicMetadataService:
         request = Request(artwork_url, headers={"User-Agent": CATALOG_USER_AGENT})
         with urlopen(request, timeout=10) as response:
             return response.read(), response.headers.get_content_type()
+
+
+def search_suggestion(pending_item: MetadataPendingItem) -> MusicSearchSuggestion:
+    """Busca da pendencia: o titulo manda, a origem completa o artista que falta."""
+    suggestion = suggest_music_search(pending_item.title)
+    if suggestion.artist or not pending_item.source_artist:
+        return suggestion
+    return MusicSearchSuggestion(title=suggestion.title, artist=pending_item.source_artist)
+
+
+# Duracao e o que separa a faixa de estudio da ao vivo, do remix e da versao
+# estendida — que o iTunes devolve com o mesmo nome e o mesmo artista.
+# O clipe oficial costuma ter alguns segundos de abertura a mais que a faixa.
+_DURATION_TOLERANCE_SECONDS = 5.0
+_PARENTHETICAL = re.compile(r"\s*[\[(]([^\])]*)[\])]")
+_REMASTER_SUFFIX = re.compile(r"\s+[-–—]\s+[^-–—]*remaster[^-–—]*$")
+# Sufixo que muda o audio fica no titulo: ignorar "(Live At Wembley)" deixaria
+# so a duracao separando o show da faixa de estudio.
+_VERSION_WORDS = re.compile(
+    r"\b(?:live|ao vivo|en vivo|remix|mix|acoustic|acustic[oa]|unplugged|"
+    r"version|versao|edit|instrumental|karaoke|cover|demo|sped up|slowed|"
+    r"a ?cc?apella)\b")
+
+
+def _drop_harmless_parenthetical(match: re.Match) -> str:
+    return f" {match.group(1)} " if _VERSION_WORDS.search(match.group(1)) else ""
+_FEATURING = re.compile(r"\s+(?:feat|ft|featuring)\b.*$")
+_NON_WORD = re.compile(r"[^\w]+")
+
+
+def _normalized_words(text: str) -> list[str]:
+    folded = unicodedata.normalize("NFKD", text.casefold())
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    folded = _REMASTER_SUFFIX.sub("", folded)
+    folded = _FEATURING.sub("", _PARENTHETICAL.sub(_drop_harmless_parenthetical, folded))
+    words = _NON_WORD.sub(" ", folded).split()
+    return words[1:] if words[:1] == ["the"] and len(words) > 1 else words
+
+
+def _same_title(a: str, b: str) -> bool:
+    return _normalized_words(a) == _normalized_words(b)
+
+
+def _same_artist(source: str, catalog: str) -> bool:
+    # Credito conjunto ("Queen & David Bowie") contem o artista principal como
+    # sequencia de palavras; contencao solta casaria "Kiss" com "Kissin' Dynamite".
+    wanted, found = _normalized_words(source), _normalized_words(catalog)
+    if not wanted:
+        return False
+    return any(found[i:i + len(wanted)] == wanted for i in range(len(found) - len(wanted) + 1))
+
+
+def confident_match(
+    pending_item: MetadataPendingItem, candidates: list[MusicMetadataCandidate],
+) -> MusicMetadataCandidate | None:
+    """Candidato que dispensa a revisao: artista, titulo e duracao batem juntos."""
+    suggestion = search_suggestion(pending_item)
+    if not suggestion.artist or pending_item.duration is None:
+        return None
+    for candidate in candidates:
+        if (candidate.duration_seconds is not None
+                and abs(candidate.duration_seconds - pending_item.duration)
+                <= _DURATION_TOLERANCE_SECONDS
+                and _same_artist(suggestion.artist, candidate.artist)
+                and _same_title(suggestion.title, candidate.title)):
+            return candidate
+    return None
+
+
+# O que descreve o video e nao a musica: "(Official Music Video)", "[HD]".
+_PACKAGING_WORDS = re.compile(
+    r"\b(?:official|oficial|video|clipe|audio|lyrics?|letra|hd|4k|visuali[sz]er|"
+    r"remaster(?:ed)?|mv)\b")
+_TRAILING_GROUP = re.compile(r"\s*[\[(]([^\])]*)[\])]\s*$")
+_TRAILING_FEATURING = re.compile(r"\s+(?:feat|ft|featuring)\b\.?\s.*$", flags=re.IGNORECASE)
+
+
+def _folded(text: str) -> str:
+    folded = unicodedata.normalize("NFKD", text.casefold())
+    return "".join(ch for ch in folded if not unicodedata.combining(ch))
+
+
+def _is_packaging(group: str) -> bool:
+    inner = _folded(group).strip()
+    # "(from One Night Only! ... Live at ...)" cita a origem: o "live" ali e do
+    # show de onde o video saiu, nao uma versao que precise ficar no nome.
+    if inner.startswith("from "):
+        return True
+    return bool(_PACKAGING_WORDS.search(inner)) and not _VERSION_WORDS.search(inner)
+
+
+def song_title(source_title: str) -> str:
+    """So o nome da musica: sem artista e sem o que embala o video."""
+    title = suggest_music_search(source_title).title
+    while (match := _TRAILING_GROUP.search(title)) and _is_packaging(match.group(1)):
+        title = title[:match.start()]
+    title = _TRAILING_FEATURING.sub("", title).strip()
+    return title or source_title.strip()
+
+
+_FORBIDDEN_IN_FILENAME = str.maketrans({
+    "/": "-", "\\": "-", "|": "-", ":": " -",
+    "*": "", "?": "", '"': "", "<": "", ">": "",
+})
+_MAX_STEM = 150
+
+
+def safe_file_stem(name: str) -> str:
+    """Nome aceito no Linux, no Windows e no macOS."""
+    stem = " ".join(name.translate(_FORBIDDEN_IN_FILENAME).split())
+    # Windows recusa nome terminado em ponto ou espaco.
+    stem = stem[:_MAX_STEM].rstrip(" .")
+    return stem or "Faixa"
+
+
+def rename_to_song(path: Path, name: str) -> Path:
+    """Renomeia para `name` sem sobrescrever outra musica de mesmo nome."""
+    stem = safe_file_stem(name)
+    target = path.with_name(f"{stem}{path.suffix}")
+    copy = 2
+    while target != path and target.exists() and not target.samefile(path):
+        target = path.with_name(f"{stem} ({copy}){path.suffix}")
+        copy += 1
+    if target == path:
+        return path
+    path.rename(target)
+    return target

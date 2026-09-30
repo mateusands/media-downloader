@@ -12,6 +12,8 @@ class DownloadSummary:
     failed_items: list[str] = field(default_factory=list)
     extractor_notices: list[str] = field(default_factory=list)
     metadata_pending_items: list["MetadataPendingItem"] = field(default_factory=list)
+    metadata_auto_applied: list[str] = field(default_factory=list)
+    already_downloaded_count: int = 0
     total_items: int = 0
     target_dir: str = ""
     playlist_mode: bool = False
@@ -22,6 +24,19 @@ class MetadataPendingItem:
     title: str
     file_path: str
     review_reasons: tuple[str, ...]
+    # O que a correspondencia automatica compara com o catalogo.
+    duration: float | None = None
+    source_artist: str | None = None
+
+
+@dataclass(frozen=True)
+class PlaylistEntry:
+    """Uma linha da escolha de itens: posicao original na playlist e historico."""
+    index: int
+    title: str
+    archive_id: str | None
+    duration: float | None
+    already_downloaded: bool
 
 
 @dataclass(frozen=True)
@@ -56,6 +71,7 @@ class MusicMetadataCandidate:
     album: str | None
     year: str | None
     artwork_url: str | None
+    duration_seconds: float | None = None
 
     @classmethod
     def from_itunes(cls, result: dict[str, Any]) -> "MusicMetadataCandidate":
@@ -67,4 +83,6 @@ class MusicMetadataCandidate:
             album=result.get("collectionName"),
             year=(result.get("releaseDate") or "")[:4] or None,
             artwork_url=_artwork_at(artwork, ITUNES_ARTWORK_SIZE) if artwork else None,
+            duration_seconds=(
+                result["trackTimeMillis"] / 1000 if result.get("trackTimeMillis") else None),
         )
