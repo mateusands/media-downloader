@@ -7,7 +7,8 @@ import sys
 import threading
 import tkinter as tk
 import webbrowser
-from tkinter import messagebox
+from pathlib import Path
+from tkinter import filedialog, messagebox
 from urllib.parse import urlparse
 
 import customtkinter as ctk
@@ -16,11 +17,10 @@ from .config import (
     APP_ICON_ICO_PATH,
     APP_ICON_PATH,
     APP_TITLE,
-    BASE_DOWNLOADS_DIR,
     SUPPORTED_PLATFORM_NAMES,
     SUPPORTED_SITES_URL,
 )
-from .downloader import DownloadManager, summary_lines
+from .downloader import DownloadManager, folder_summary_lines, summary_lines
 from .models import DownloadSummary, MusicMetadataCandidate
 from .theme import (
     BG_CARD,
@@ -38,18 +38,19 @@ from .theme import (
     FONT_FAMILY,
 )
 from .review import MetadataReview
+from .settings import SETTINGS_PATH, Settings, load_settings, save_settings
 from .selection import PlaylistSelection
 from .widgets import FormatCard, HoverButton
 
 class MediaDownloaderApp:
     # Altura medida pelo conteudo: abaixo disso a secao de progresso sai da
     # janela, e e ela que diz se o download andou.
-    _W, _H = 860, 890
+    _W, _H = 860, 920
 
     def __init__(self, root: ctk.CTk):
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.minsize(740, 880)
+        self.root.minsize(740, 910)
         self.root.configure(fg_color=BG_DARK)
         self._app_icon = tk.PhotoImage(file=str(APP_ICON_PATH))
         self._header_icon = self._app_icon.subsample(8, 8)
@@ -59,6 +60,8 @@ class MediaDownloaderApp:
 
         self._q: queue.Queue = queue.Queue()
         self._manager = DownloadManager(self._q)
+        self._downloads_dir = load_settings().downloads_dir
+        self._manager.set_downloads_dir(self._downloads_dir)
         self._thread: threading.Thread | None = None
         self._review = MetadataReview(self.root, self._manager)
         self._selection = PlaylistSelection(
@@ -294,7 +297,7 @@ class MediaDownloaderApp:
             row, text="Baixar midia",
             font=(FONT_FAMILY, 13, "bold"),
             base_color=CLR_ACCENT, hover_color=CLR_ACCENT_DARK, press_color="#4036aa",
-            text_color="#ffffff", width=200, height=44,
+            text_color="#ffffff", width=170, height=44,
             command=self.start_download,
         )
         self.download_btn.pack(side="left", padx=(0, 12))
@@ -304,20 +307,47 @@ class MediaDownloaderApp:
             font=(FONT_FAMILY, 12),
             base_color="transparent", hover_color=BG_HOVER, press_color=CLR_BORDER,
             text_color=CLR_TEXT, border_width=2, border_color=CLR_BORDER,
-            width=180, height=44,
+            width=120, height=44,
             command=self.open_downloads_folder,
         )
         self.folder_btn.pack(side="left")
+
+        self.fix_folder_btn = HoverButton(
+            row, text="Corrigir pasta MP3",
+            font=(FONT_FAMILY, 12),
+            base_color="transparent", hover_color=BG_HOVER, press_color=CLR_BORDER,
+            text_color=CLR_TEXT, border_width=2, border_color=CLR_BORDER,
+            width=170, height=44,
+            command=self.fix_music_folder,
+        )
+        self.fix_folder_btn.pack(side="left", padx=(12, 0))
 
         self.cancel_btn = HoverButton(
             row, text="Cancelar",
             font=(FONT_FAMILY, 12),
             base_color="transparent", hover_color=BG_HOVER, press_color=CLR_BORDER,
             text_color=CLR_TEXT, border_width=2, border_color=CLR_BORDER,
-            width=140, height=44, state="disabled",
+            width=120, height=44, state="disabled",
             command=self.cancel_download,
         )
         self.cancel_btn.pack(side="left", padx=(12, 0))
+
+        dest_row = ctk.CTkFrame(parent, fg_color="transparent")
+        dest_row.pack(fill="x", pady=(10, 0))
+        ctk.CTkLabel(
+            dest_row, text="Salvar em:", font=(FONT_FAMILY, 11, "bold"), text_color=CLR_TEXT,
+        ).pack(side="left")
+        self._dest_label = ctk.CTkLabel(
+            dest_row, text=self._short_path(self._downloads_dir),
+            font=(FONT_FAMILY, 11), text_color=CLR_MUTED, anchor="w",
+        )
+        self._dest_label.pack(side="left", padx=(6, 10))
+        self.dest_link = ctk.CTkLabel(
+            dest_row, text="Alterar pasta",
+            font=(FONT_FAMILY, 11), text_color=CLR_ACCENT_LIGHT, cursor="hand2",
+        )
+        self.dest_link.pack(side="left")
+        self.dest_link.bind("<Button-1>", lambda _: self.choose_downloads_dir())
 
     # ── Progress Section ──────────────────────────────────────────────────────
 
@@ -397,6 +427,41 @@ class MediaDownloaderApp:
             self.auto_metadata_var.get(),
         )
 
+    def fix_music_folder(self) -> None:
+        """Corrige capa e metadata de MP3 que ja estavam no disco."""
+        if self._thread and self._thread.is_alive():
+            messagebox.showwarning(
+                "Operacao em andamento",
+                "Aguarde o download atual terminar antes de corrigir uma pasta.")
+            return
+        folder = filedialog.askdirectory(
+            parent=self.root, title="Pasta com os MP3 a corrigir", mustexist=True)
+        if not folder:
+            return
+        auto = messagebox.askyesno(
+            "Corrigir pasta MP3",
+            "Aplicar sozinho quando artista, titulo e duracao baterem com o catalogo?\n\n"
+            "Isso grava as tags e a capa e renomeia o arquivo para o nome da musica. "
+            "O que ficar em duvida vai para a revisao.\n\n"
+            "Com \"Nao\", tudo vai para a revisao e nada e gravado sem voce confirmar.",
+            parent=self.root)
+        artist = ctk.CTkInputDialog(
+            title="Artista dos MP3 sem artista",
+            text=("Opcional: artista para os MP3 que nao tem artista gravado "
+                  "(ex.: uma pasta so de um artista). Deixe em branco para pular."),
+        ).get_input()
+        if artist is None:
+            return
+
+        self._set_busy(True, busy_text="Corrigindo...")
+        self.progress_bar.set(0)
+        self.pct_var.set("")
+        self._pct_label.configure(text_color=CLR_MUTED)
+        self._status_label.configure(text_color=CLR_TEXT)
+        self.status_var.set("Lendo os MP3 da pasta...")
+        self.info_var.set(f"Pasta: {folder}")
+        self._start_worker(self._manager.fix_folder, folder, auto, artist)
+
     def _start_worker(self, target, *args) -> None:
         self._thread = threading.Thread(target=target, args=args, daemon=True)
         self._thread.start()
@@ -426,15 +491,37 @@ class MediaDownloaderApp:
             text="Cole um link de video, audio ou colecao.",
             text_color=CLR_MUTED)
 
+    def choose_downloads_dir(self) -> None:
+        if self._thread and self._thread.is_alive():
+            messagebox.showwarning(
+                "Download em andamento",
+                "Aguarde o download atual terminar antes de trocar a pasta.")
+            return
+        folder = filedialog.askdirectory(
+            parent=self.root, title="Onde salvar os downloads",
+            initialdir=str(self._downloads_dir), mustexist=False)
+        if not folder:
+            return
+        self._downloads_dir = Path(folder)
+        self._manager.set_downloads_dir(self._downloads_dir)
+        self._dest_label.configure(text=self._short_path(self._downloads_dir))
+        try:
+            save_settings(SETTINGS_PATH, Settings(downloads_dir=self._downloads_dir))
+        except OSError as exc:
+            messagebox.showwarning(
+                "Pasta de destino",
+                f"A pasta vale para esta sessao, mas nao deu para lembrar dela.\n\n{exc}")
+
     def open_downloads_folder(self) -> None:
-        BASE_DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        folder = self._downloads_dir
+        folder.mkdir(parents=True, exist_ok=True)
         try:
             if sys.platform.startswith("win"):
-                os.startfile(BASE_DOWNLOADS_DIR)
+                os.startfile(folder)
             elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(BASE_DOWNLOADS_DIR)])
+                subprocess.Popen(["open", str(folder)])
             else:
-                subprocess.Popen(["xdg-open", str(BASE_DOWNLOADS_DIR)])
+                subprocess.Popen(["xdg-open", str(folder)])
         except Exception as exc:
             messagebox.showerror("Erro ao abrir pasta", str(exc))
 
@@ -478,6 +565,20 @@ class MediaDownloaderApp:
                 self._pct_label.configure(text_color=CLR_GREEN)
                 self._status_label.configure(text_color=CLR_GREEN)
             self._show_summary(summary)
+
+        elif etype == "folder_checked":
+            summary = event["summary"]
+            self._set_busy(False)
+            self.progress_bar.set(1 if summary.total_items else 0)
+            self.pct_var.set("")
+            pending = len(summary.metadata_pending_items)
+            self.status_var.set(
+                f"Pasta conferida — {len(summary.metadata_auto_applied)} corrigido(s) "
+                f"sozinho(s), {pending} para revisar.")
+            self.info_var.set(f"Pasta: {summary.target_dir}")
+            messagebox.showinfo("Correcao da pasta", "\n".join(folder_summary_lines(summary)))
+            if pending:
+                self._review.open(summary.metadata_pending_items)
 
         elif etype == "playlist_listed":
             entries = event.get("entries", [])
@@ -533,6 +634,28 @@ class MediaDownloaderApp:
                 f"Metadata de {candidate.artist} — {candidate.title} importada{cover_message}.",
             )
 
+        elif etype == "metadata_bulk_progress":
+            self._review.bulk_progress(event["done"], event["total"])
+            self.status_var.set(
+                f"Aplicando sugestao do catalogo ({event['done'] + 1}/{event['total']})...")
+
+        elif etype == "metadata_bulk_applied":
+            self._review.resolve(event["pending_item"])
+
+        elif etype == "metadata_bulk_done":
+            applied, kept = event["applied"], event["kept"]
+            self._review.bulk_finished(applied, kept, event.get("failed", 0))
+            self.status_var.set(
+                f"Sugestao aplicada em {applied} MP3"
+                + (f"; {kept} continuam na revisao." if kept else "."))
+
+        elif etype == "metadata_cover_cropped":
+            self._review.resolve(event["pending_item"])
+
+        elif etype == "metadata_crop_done":
+            self._review.crop_finished(event["cropped"], event["failed"])
+            self.status_var.set(f"{event['cropped']} capa(s) recortada(s) da miniatura do video.")
+
         elif etype == "metadata_import_error":
             messagebox.showerror(
                 "Importacao de metadata",
@@ -569,11 +692,12 @@ class MediaDownloaderApp:
 
     # ── State helpers ─────────────────────────────────────────────────────────
 
-    def _set_busy(self, busy: bool) -> None:
+    def _set_busy(self, busy: bool, busy_text: str = "Baixando...") -> None:
         state = "disabled" if busy else "normal"
         self.download_btn.configure(
             state=state,
-            text="Baixando..." if busy else "Baixar midia")
+            text=busy_text if busy else "Baixar midia")
+        self.fix_folder_btn.configure(state=state)
         self.url_entry.configure(state=state)
         self.paste_btn.configure(state=state)
         self.folder_btn.configure(state=state)
@@ -598,6 +722,13 @@ class MediaDownloaderApp:
             self.auto_metadata_checkbox.configure(state="normal", text_color=CLR_TEXT)
         else:
             self.auto_metadata_checkbox.configure(state="disabled", text_color=CLR_MUTED)
+
+    @staticmethod
+    def _short_path(path: Path, limit: int = 70) -> str:
+        # Caminho longo empurraria o "Alterar pasta" para fora da linha; o fim
+        # do caminho e o que diz onde o arquivo cai.
+        text = str(path)
+        return text if len(text) <= limit else "…" + text[-(limit - 1):]
 
     @staticmethod
     def _valid_url(url: str) -> bool:

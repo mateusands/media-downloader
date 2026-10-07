@@ -88,7 +88,7 @@ class TestAberturaDaPastaDeDownloads:
         chamadas = []
         aplicativo = object.__new__(MediaDownloaderApp)
         destino = tmp_path / "Downloads"
-        monkeypatch.setattr(window, "BASE_DOWNLOADS_DIR", destino)
+        aplicativo._downloads_dir = destino
         monkeypatch.setattr(window.sys, "platform", "linux")
         monkeypatch.setattr(window.subprocess, "Popen", lambda argumentos: chamadas.append(argumentos))
 

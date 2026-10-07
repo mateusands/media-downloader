@@ -6,13 +6,19 @@ import time
 import unicodedata
 from pathlib import Path
 from typing import Any, Callable
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from mutagen import MutagenError
 from mutagen.id3 import APIC, ID3, ID3NoHeaderError, TALB, TDRC, TIT2, TPE1
 
-from .config import CATALOG_RESULTS_SHOWN, CATALOG_USER_AGENT, ITUNES_SEARCH_URL
+from .config import (
+    CATALOG_MIN_INTERVAL_SECONDS,
+    CATALOG_RESULTS_SHOWN,
+    CATALOG_USER_AGENT,
+    ITUNES_SEARCH_URL,
+)
 from .models import (
     EmbeddedMetadata,
     MetadataPendingItem,
@@ -61,8 +67,10 @@ def metadata_review_reasons(info: dict[str, Any]) -> tuple[str, ...]:
 
 
 # Arte de album e quadrada. A miniatura do YouTube e 16:9 — um quadro do video —
-# e o EmbedThumbnail grava ela como esta.
-_PROPORCAO_QUADRADA = (0.9, 1.1)
+# e o EmbedThumbnail grava ela como esta. A margem e larga porque a propria arte
+# do catalogo nem sempre e exata ("Transit of Venus" vem 600x538, 1,12); o que
+# precisa ficar de fora e video, e o mais estreito deles (4:3) ja e 1,33.
+PROPORCAO_QUADRADA = (0.8, 1.25)
 
 
 def _cover_reason(info: dict[str, Any]) -> str | None:
@@ -79,7 +87,7 @@ def _cover_reason(info: dict[str, Any]) -> str | None:
         return None
     maior = max(medidas, key=lambda t: t["width"])
     proporcao = maior["width"] / maior["height"]
-    if _PROPORCAO_QUADRADA[0] <= proporcao <= _PROPORCAO_QUADRADA[1]:
+    if PROPORCAO_QUADRADA[0] <= proporcao <= PROPORCAO_QUADRADA[1]:
         return None
     return "capa provisoria: miniatura do video"
 
@@ -102,9 +110,11 @@ class MusicMetadataService:
         self,
         fetch_json: Callable[[str], dict[str, Any]] | None = None,
         fetch_cover: Callable[[str], tuple[bytes, str]] | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ):
         self._fetch_json = fetch_json or self._request_json
         self._fetch_cover = fetch_cover or self._request_cover
+        self._sleep = sleep
         self._last_request_at = 0.0
 
     def search(self, suggestion: MusicSearchSuggestion) -> list[MusicMetadataCandidate]:
@@ -115,12 +125,28 @@ class MusicMetadataService:
             "term": term, "media": "music", "entity": "song",
             "limit": CATALOG_RESULTS_SHOWN,
         })
-        payload = self._fetch_json(f"{ITUNES_SEARCH_URL}?{query}")
+        payload = self._fetch_with_backoff(f"{ITUNES_SEARCH_URL}?{query}")
         candidates = [
             MusicMetadataCandidate.from_itunes(result)
             for result in payload.get("results", [])
         ]
         return candidates[:CATALOG_RESULTS_SHOWN]
+
+    # O iTunes aceita uns 20 pedidos por minuto e, passado isso, responde 403 (as
+    # vezes 429) por um tempo. Corrigindo uma pasta inteira, desistir no primeiro
+    # 403 deixava faixa obvia na revisao — o limite passa, o pedido nao.
+    _RATE_LIMIT_CODES = (403, 429)
+    _BACKOFF_SECONDS = (15.0, 30.0, 60.0)
+
+    def _fetch_with_backoff(self, url: str) -> dict[str, Any]:
+        for wait in self._BACKOFF_SECONDS:
+            try:
+                return self._fetch_json(url)
+            except HTTPError as exc:
+                if exc.code not in self._RATE_LIMIT_CODES:
+                    raise
+                self._sleep(wait)
+        return self._fetch_json(url)
 
     def get_cover_preview(
         self, candidate: MusicMetadataCandidate,
@@ -133,7 +159,7 @@ class MusicMetadataService:
             return None
 
     def _request_json(self, url: str) -> dict[str, Any]:
-        wait = 1.0 - (time.monotonic() - self._last_request_at)
+        wait = CATALOG_MIN_INTERVAL_SECONDS - (time.monotonic() - self._last_request_at)
         if wait > 0:
             time.sleep(wait)
         request = Request(url, headers={"User-Agent": CATALOG_USER_AGENT, "Accept": "application/json"})
@@ -203,7 +229,10 @@ def search_suggestion(pending_item: MetadataPendingItem) -> MusicSearchSuggestio
     suggestion = suggest_music_search(pending_item.title)
     if suggestion.artist or not pending_item.source_artist:
         return suggestion
-    return MusicSearchSuggestion(title=suggestion.title, artist=pending_item.source_artist)
+    # A origem credita todos os compositores ("Jeremy Renner, Brandon Sammons,
+    # ..."), e com o credito inteiro a busca do iTunes volta vazia.
+    artist = pending_item.source_artist.split(",")[0].strip() or pending_item.source_artist
+    return MusicSearchSuggestion(title=suggestion.title, artist=artist)
 
 
 # Duracao e o que separa a faixa de estudio da ao vivo, do remix e da versao
@@ -220,8 +249,15 @@ _VERSION_WORDS = re.compile(
     r"a ?cc?apella)\b")
 
 
+# "(Album Version)" e a propria faixa de estudio, apesar do "version".
+_STUDIO_VERSION = re.compile(r"^\s*(?:album|lp|original)\s+version\s*$")
+
+
 def _drop_harmless_parenthetical(match: re.Match) -> str:
-    return f" {match.group(1)} " if _VERSION_WORDS.search(match.group(1)) else ""
+    group = match.group(1)
+    if _STUDIO_VERSION.match(group) or not _VERSION_WORDS.search(group):
+        return ""
+    return f" {group} "
 _FEATURING = re.compile(r"\s+(?:feat|ft|featuring)\b.*$")
 _NON_WORD = re.compile(r"[^\w]+")
 
@@ -264,6 +300,28 @@ def confident_match(
             return candidate
     return None
 
+
+
+def suggested_match(
+    pending_item: MetadataPendingItem, candidates: list[MusicMetadataCandidate],
+) -> MusicMetadataCandidate | None:
+    """O que o app sugere quando a pessoa manda aplicar em todos.
+
+    So existe atras do botao de aplicar em lote — o clique e a autorizacao.
+    Relaxa apenas a duracao, que separa o clipe com abertura da faixa do album;
+    artista e titulo (com a versao) continuam obrigatorios.
+    """
+    safe = confident_match(pending_item, candidates)
+    if safe is not None:
+        return safe
+    suggestion = search_suggestion(pending_item)
+    if not suggestion.artist:
+        return None
+    for candidate in candidates:
+        if (_same_artist(suggestion.artist, candidate.artist)
+                and _same_title(suggestion.title, candidate.title)):
+            return candidate
+    return None
 
 # O que descreve o video e nao a musica: "(Official Music Video)", "[HD]".
 _PACKAGING_WORDS = re.compile(

@@ -14,6 +14,8 @@ class DownloadSummary:
     metadata_pending_items: list["MetadataPendingItem"] = field(default_factory=list)
     metadata_auto_applied: list[str] = field(default_factory=list)
     already_downloaded_count: int = 0
+    # Correcao de pasta: MP3 com titulo, artista, album e capa quadrada, que nao se toca.
+    already_complete_count: int = 0
     total_items: int = 0
     target_dir: str = ""
     playlist_mode: bool = False

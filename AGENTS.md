@@ -7,7 +7,8 @@ compatíveis com o yt-dlp. Aceita links HTTP/HTTPS e deixa a confirmação de su
 detecção explícita de playlists do YouTube para não baixar uma coleção inteira quando o usuário forneceu o link de
 um único vídeo. Em playlist, lista os itens e deixa escolher o que baixar, lembrando o que já foi baixado antes.
 Organiza os downloads em pastas por tipo, mostra progresso em tempo real, permite cancelar e fecha com um resumo
-dos itens que falharam.
+dos itens que falharam. Também corrige capa e metadata de MP3 que já estavam no disco ("Corrigir pasta MP3"),
+pelo mesmo catálogo e pela mesma revisão do download.
 
 Projeto de portfólio.
 
@@ -45,6 +46,8 @@ media-downloader/
 │       ├── theme.py        # paleta e tipografia
 │       ├── models.py       # dados imutáveis que atravessam a fila
 │       ├── metadata.py     # catálogo do iTunes e tags do arquivo
+│       ├── library.py      # MP3 que já estão no disco viram pendência de metadata
+│       ├── settings.py     # preferências salvas (pasta de destino) em ~/.config/media-downloader
 │       ├── downloader.py   # ReportingLogger e DownloadManager
 │       ├── widgets.py      # FormatCard e HoverButton
 │       ├── review.py       # MetadataReview — diálogos de revisão de metadata
@@ -58,6 +61,10 @@ media-downloader/
     ├── test_playlist.py         # histórico, numeração, escolha de itens, cancelamento, runtime JS
     ├── test_music_metadata.py   # sugestão, catálogo e importação de metadata escolhida
     ├── test_metadata_automatica.py # correspondência segura e aplicação automática
+    ├── test_pasta_existente.py  # correção de uma pasta de MP3 e limite do catálogo
+    ├── test_aceitar_em_lote.py  # "Aplicar sugestão em todos" na revisão
+    ├── test_pasta_de_destino.py # pasta de destino escolhida e lembrada
+    ├── test_capa_e_creditos.py  # crédito longo, "(Album Version)", catálogo sem resposta, recorte
     ├── test_selecao.py          # estado da escolha de itens da playlist
     ├── test_contraste.py        # contraste AA da paleta
     └── test_ui_controls.py      # acionamento de controles e diálogos da revisão
@@ -67,7 +74,9 @@ media-downloader/
 `downloader` e `metadata` nunca importam de `window`, `widgets` ou `theme`. Se você precisar do
 contrário, a regra está na camada errada.
 
-Os downloads vão para `Downloads/` na raiz do repo, em subpastas:
+Os downloads vão para a pasta escolhida em "Salvar em / Alterar pasta" (guardada em
+`$XDG_CONFIG_HOME/media-downloader/config.json` por `settings.py`); sem escolha, `Downloads/` na raiz do repo.
+As subpastas por tipo são as mesmas dentro de qualquer base:
 
 | Formato | Item único | Playlist |
 |---|---|---|
@@ -107,6 +116,12 @@ exclusivamente por uma `queue.Queue`, publicando eventos com `_emit(tipo, **payl
 - `confident_match(item, candidatos)` — o candidato que dispensa revisão: artista, título **e** duração (±5 s)
   batendo juntos; versão diferente (ao vivo, remix, acústica) nunca casa. `_auto_apply_metadata` usa ao fim do
   download quando a pessoa ligou a aplicação automática.
+- `fix_folder(pasta, auto_metadata, artista)` — "Corrigir pasta MP3": `library.read_local_item` lê cada MP3
+  como `MetadataPendingItem` (título e artista das tags; sem título gravado, o nome do arquivo vira a busca),
+  aplica o seguro com `_auto_apply_metadata` se a pessoa pediu e publica `folder_checked`. O artista que a
+  pessoa informa vale só para MP3 sem artista gravado e continua passando pelo `confident_match`.
+  MP3 completo — título, artista, álbum e capa **quadrada** — não é tocado (conta em `already_complete_count`);
+  capa 16:9 é miniatura do vídeo e entra na correção. Erro de digitação em arquivo completo se corrige à mão.
 - `MusicMetadataService` — pesquisa candidatos na API de busca do iTunes e incorpora no MP3 apenas o
   candidato selecionado. Uma resposta já traz faixa, artista, álbum, ano e a arte, então não há segunda
   chamada para capa. `read_embedded` lê de volta o que já está gravado no arquivo — é a fonte da prévia
@@ -143,6 +158,10 @@ O download roda em `threading.Thread(target=self._manager.download, daemon=True)
   **ou** o que `confident_match` aprovou num download em que ela ligou "Aplicar sozinho". Desligada a opção, nada
   é gravado sem confirmação. Afrouxar o `confident_match` (tolerar dois de três critérios, casar só pelo título)
   é gravar palpite no arquivo dela — o ambíguo vai para a revisão.
+  Exceção explícita: o botão **"Aplicar sugestão em todos"** da revisão usa `suggested_match`, que relaxa só
+  a duração (artista e título com a versão continuam obrigatórios) — o clique é a autorização, e o critério
+  relaxado não vaza para a aplicação automática. Para faixa fora do catálogo, "Recortar capa"/"Recortar miniaturas"
+  (`crop_covers`) troca a miniatura 16:9 pelo centro quadrado dela — também só por clique.
 - **Não chame de ausente o que está gravado.** O `FFmpegMetadata` do yt-dlp cai para o nome do canal quando
   a origem não publica `artist` — o MP3 sai com artista provisório (`AudioslaveVEVO`), não sem artista.
   A revisão nomeia o canal; dizer "faltam: artista" era falso e foi o que originou `metadata_review_reasons`.
@@ -267,6 +286,16 @@ Conventional Commits: `feat: adiciona escolha de qualidade`, `fix: trata playlis
    clipado no meio, sem reticências. Vale nos **dois** diálogos: o `minsize` da revisão acompanha o
    `wraplength` da linha de motivos, e o dos resultados acompanha o do título do candidato — que precisa
    de quebra porque o iTunes devolve nome de faixa longo. Mexer em um exige mexer no outro.
+
+12. **O iTunes limita a ~20 buscas por minuto e responde 403 (às vezes 429) depois disso.** O erro era engolido
+   por `_auto_apply_metadata` e a faixa óbvia ia para a revisão — corrigindo uma pasta de 136 MP3, 87 caíram lá.
+   `CATALOG_MIN_INTERVAL_SECONDS` espaça as buscas e `_fetch_with_backoff` espera e tenta de novo só em 403/429.
+   Mesmo assim o lote conta à parte (`failed`) o que o catálogo não respondeu: "sem sugestão" e "não consultado"
+   pedem respostas diferentes da pessoa.
+
+13. **A origem credita todos os compositores no artista** ("Jeremy Renner, Brandon Sammons, …") e o iTunes não
+   acha nada com o crédito inteiro. `search_suggestion` usa só o primeiro nome do crédito da origem; o do título
+   ("Queen & David Bowie - …") fica inteiro.
 
 ---
 

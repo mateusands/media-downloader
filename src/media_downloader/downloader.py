@@ -14,6 +14,7 @@ from yt_dlp.postprocessor.metadataparser import MetadataParserPP
 from yt_dlp.utils import DownloadCancelled
 
 from .config import DOWNLOAD_FOLDERS
+from .library import crop_cover_to_square, music_files, read_local_item
 from .metadata import (
     MusicMetadataService,
     confident_match,
@@ -21,6 +22,7 @@ from .metadata import (
     rename_to_song,
     search_suggestion,
     song_title,
+    suggested_match,
 )
 from .models import (
     DownloadSummary,
@@ -69,6 +71,23 @@ def summary_lines(summary: DownloadSummary) -> list[str]:
         lines += ["", f"A revisao abre em seguida, com {pending} item(s) para confirmar."]
     return lines
 
+
+
+def folder_summary_lines(summary: DownloadSummary) -> list[str]:
+    """Resumo da correcao de uma pasta — nada foi baixado, entao nao fala em download."""
+    failed = len(summary.failed_items)
+    lines = [
+        f"{summary.total_items} MP3 lido(s) na pasta",
+        f"==  {summary.already_complete_count} ja completo(s), nao tocado(s)",
+        f"OK  {len(summary.metadata_auto_applied)} com metadata aplicada automaticamente",
+        f"--  {len(summary.metadata_pending_items)} para confirmar na revisao",
+    ]
+    if failed:
+        lines.append(f"--  {failed} arquivo(s) que nao deu para ler")
+        lines += [f"  - {item}" for item in summary.failed_items[:FAILURES_SHOWN]]
+        if failed > FAILURES_SHOWN:
+            lines.append(f"  ... e mais {failed - FAILURES_SHOWN}")
+    return lines
 
 # Um por pasta de destino: o MP3 de um video nao pode impedir o MP4 dele.
 ARCHIVE_FILENAME = ".historico-de-downloads.txt"
@@ -205,6 +224,11 @@ class DownloadManager:
         self._q = event_queue
         self._metadata_service = metadata_service or MusicMetadataService()
         self._cancel = threading.Event()
+        # Separado do cancelamento do download: parar o lote na revisao nao
+        # pode interromper um download que esteja rodando ao mesmo tempo.
+        self._stop_bulk = threading.Event()
+        # None mantem DOWNLOAD_FOLDERS como esta (Downloads/ do repositorio).
+        self._downloads_dir: Path | None = None
         self._listing: _PlaylistListing | None = None
         self._finished_files: list[tuple[str, Path]] = []
 
@@ -272,6 +296,81 @@ class DownloadManager:
             )
         except Exception:
             self._emit("metadata_cover_unavailable", candidate=candidate)
+
+    def set_downloads_dir(self, base: Path) -> None:
+        """Base escolhida pela pessoa; as subpastas por tipo continuam as mesmas."""
+        self._downloads_dir = base
+
+    def stop_bulk(self) -> None:
+        self._stop_bulk.set()
+
+    def apply_suggested(self, pending_items: list[MetadataPendingItem]) -> None:
+        """Aplica a sugestao do app em cada item; o que nao tem sugestao fica na revisao."""
+        self._stop_bulk.clear()
+        applied = failed = 0
+        for position, item in enumerate(pending_items, start=1):
+            if self._stop_bulk.is_set():
+                break
+            self._emit("metadata_bulk_progress", done=position - 1, total=len(pending_items))
+            try:
+                candidate = suggested_match(
+                    item, self._metadata_service.search(search_suggestion(item)))
+                if candidate is None:
+                    continue
+                self._apply_candidate(item, candidate)
+            except Exception:
+                # Catalogo fora do ar ou arquivo travado num item: ele so continua
+                # na revisao, e o lote segue — mas contado a parte, porque "sem
+                # sugestao" e "nao consultado" pedem respostas diferentes.
+                failed += 1
+                continue
+            applied += 1
+            self._emit("metadata_bulk_applied", pending_item=item, candidate=candidate)
+        self._emit(
+            "metadata_bulk_done", applied=applied, kept=len(pending_items) - applied,
+            failed=failed)
+
+    def crop_covers(self, pending_items: list[MetadataPendingItem]) -> None:
+        """Recorta para quadrada a miniatura gravada — so por escolha da pessoa."""
+        cropped = failed = 0
+        for item in pending_items:
+            try:
+                crop_cover_to_square(Path(item.file_path))
+            except Exception:
+                failed += 1
+                continue
+            cropped += 1
+            self._emit("metadata_cover_cropped", pending_item=item)
+        self._emit("metadata_crop_done", cropped=cropped, failed=failed)
+
+    def fix_folder(
+        self, folder: str, auto_metadata: bool, artist_hint: str | None = None,
+    ) -> None:
+        """Leva MP3 que ja estao no disco para a mesma correspondencia e revisao do download."""
+        self._reset_cancel()
+        try:
+            summary = DownloadSummary(target_dir=folder)
+            self._emit("status", message="Lendo os MP3 da pasta...")
+            paths = music_files(Path(folder))
+            for path in paths:
+                try:
+                    item = read_local_item(path, artist_hint)
+                except Exception:
+                    summary.failed_items.append(path.name)
+                    continue
+                # Sem motivo nenhum e arquivo completo: a pessoa pediu que nao se toque.
+                if item.review_reasons:
+                    summary.metadata_pending_items.append(item)
+                else:
+                    summary.already_complete_count += 1
+            summary.total_items = len(paths)
+            if auto_metadata:
+                self._auto_apply_metadata(summary)
+            # O que tem algo faltando vem antes do que so precisa ser conferido.
+            summary.metadata_pending_items.sort(key=lambda item: not item.review_reasons)
+            self._emit("folder_checked", summary=summary)
+        except Exception as exc:
+            self._emit("error", message=str(exc))
 
     def download(
         self, url: str, file_format: str,
@@ -599,6 +698,8 @@ class DownloadManager:
 
     def _ensure_output_dir(self, file_format: str, playlist_mode: bool) -> Path:
         path = DOWNLOAD_FOLDERS[(file_format, playlist_mode)]
+        if self._downloads_dir is not None:
+            path = self._downloads_dir / path.name
         path.mkdir(parents=True, exist_ok=True)
         return path
 

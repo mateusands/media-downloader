@@ -20,6 +20,7 @@ from .metadata import metadata_review_detail
 from .models import EmbeddedMetadata, MetadataPendingItem, MusicMetadataCandidate
 from .theme import (
     BG_CARD,
+    CLR_BORDER,
     BG_DARK,
     BG_HOVER,
     BG_INPUT,
@@ -31,6 +32,10 @@ from .theme import (
     FONT_FAMILY,
 )
 from .widgets import HoverButton
+
+
+def _has_provisional_cover(item: MetadataPendingItem) -> bool:
+    return any(reason.startswith("capa provisoria") for reason in item.review_reasons)
 
 
 class MetadataReview:
@@ -49,6 +54,10 @@ class MetadataReview:
         ] = {}
         self._metadata_embedded_images: dict[MetadataPendingItem, ctk.CTkImage] = {}
         self._metadata_review_window: ctk.CTkToplevel | None = None
+        self._bulk_thread: threading.Thread | None = None
+        self._bulk_btn: HoverButton | None = None
+        self._bulk_label: ctk.CTkLabel | None = None
+        self._crop_btn: HoverButton | None = None
 
     def open(self, pending_items: list[MetadataPendingItem]) -> None:
         window = ctk.CTkToplevel(self._root)
@@ -73,7 +82,32 @@ class MetadataReview:
                   "para substituir; a selecao do catalogo, e nao o titulo sugerido, e o "
                   "que sera importado."),
             font=(FONT_FAMILY, 11), text_color=CLR_MUTED, wraplength=650, justify="left",
-        ).pack(anchor="w", padx=24, pady=(0, 16))
+        ).pack(anchor="w", padx=24, pady=(0, 10))
+
+        bulk_row = ctk.CTkFrame(window, fg_color="transparent")
+        bulk_row.pack(fill="x", padx=24, pady=(0, 12))
+        self._bulk_btn = HoverButton(
+            bulk_row, text="Aplicar sugestao em todos", width=210, height=34,
+            font=(FONT_FAMILY, 11, "bold"),
+            base_color=CLR_ACCENT, hover_color=CLR_ACCENT_DARK, text_color=CLR_TEXT,
+            command=self._toggle_bulk,
+        )
+        self._bulk_btn.pack(side="left")
+        self._crop_btn = HoverButton(
+            bulk_row, text="Recortar miniaturas", width=160, height=34,
+            font=(FONT_FAMILY, 11),
+            base_color="transparent", hover_color=BG_HOVER, press_color=CLR_BORDER,
+            text_color=CLR_TEXT, border_width=2, border_color=CLR_BORDER,
+            command=self._crop_all,
+        )
+        self._crop_btn.pack(side="left", padx=(8, 0))
+        self._bulk_label = ctk.CTkLabel(
+            bulk_row,
+            text=("Aplicar: resultado do catalogo com o mesmo artista e titulo. "
+                  "Recortar: usa o centro da miniatura do video como capa quadrada."),
+            font=(FONT_FAMILY, 10), text_color=CLR_MUTED, wraplength=290, justify="left",
+        )
+        self._bulk_label.pack(side="left", padx=(12, 0))
 
         items_frame = ctk.CTkScrollableFrame(window, fg_color=BG_CARD, corner_radius=12)
         items_frame.pack(fill="both", expand=True, padx=24, pady=(0, 22))
@@ -109,7 +143,18 @@ class MetadataReview:
                 text_color=CLR_TEXT,
                 command=lambda item=pending_item: self.start_search(item),
             )
-            search_btn.grid(row=0, column=2, rowspan=3, padx=10, pady=10)
+            if _has_provisional_cover(pending_item):
+                search_btn.grid(row=0, column=2, rowspan=2, padx=10, pady=(10, 2), sticky="s")
+                HoverButton(
+                    row, text="Recortar capa", width=145, height=28,
+                    font=(FONT_FAMILY, 10),
+                    base_color="transparent", hover_color=BG_HOVER, press_color=CLR_BORDER,
+                    text_color=CLR_TEXT, border_width=1, border_color=CLR_BORDER,
+                    command=lambda item=pending_item: self._spawn(
+                        self._manager.crop_covers, [item]),
+                ).grid(row=2, column=2, padx=10, pady=(2, 10), sticky="n")
+            else:
+                search_btn.grid(row=0, column=2, rowspan=3, padx=10, pady=10)
 
             # Chaveado pelo próprio item: dois pendentes podem compartilhar o
             # caminho (o yt-dlp nem sempre informa o nome do arquivo), e aí a
@@ -171,6 +216,55 @@ class MetadataReview:
         if window is not None and window.winfo_exists():
             window.destroy()
         self._metadata_review_window = None
+
+    def _toggle_bulk(self) -> None:
+        """Um clique aplica a sugestao em todos; o segundo para entre um item e outro."""
+        if self._bulk_thread and self._bulk_thread.is_alive():
+            self._manager.stop_bulk()
+            self._set_bulk_text("Parando...", "Termina o item atual e para.", busy=True)
+            return
+        items = list(self._metadata_review_rows)
+        if not items:
+            return
+        self._set_bulk_text("Parar", f"Conferindo 1/{len(items)} no catalogo...", busy=False)
+        self._bulk_thread = self._spawn(self._manager.apply_suggested, items)
+
+    def bulk_progress(self, done: int, total: int) -> None:
+        if self._bulk_label is not None and self._bulk_label.winfo_exists():
+            self._bulk_label.configure(text=f"Conferindo {done + 1}/{total} no catalogo...")
+
+    def bulk_finished(self, applied: int, kept: int, failed: int = 0) -> None:
+        parts = [f"{applied} aplicado(s)"]
+        if failed:
+            parts.append(f"{failed} sem resposta do catalogo — clique de novo em alguns minutos")
+        if kept - failed:
+            parts.append(f"{kept - failed} sem sugestao no catalogo")
+        self._set_bulk_text("Aplicar sugestao em todos", "; ".join(parts) + ".", busy=False)
+
+    def _crop_all(self) -> None:
+        items = [item for item in self._metadata_review_rows if _has_provisional_cover(item)]
+        if not items:
+            if self._bulk_label is not None and self._bulk_label.winfo_exists():
+                self._bulk_label.configure(text="Nenhum item com miniatura do video para recortar.")
+            return
+        if self._crop_btn is not None and self._crop_btn.winfo_exists():
+            self._crop_btn.configure(state="disabled", text="Recortando...")
+        self._spawn(self._manager.crop_covers, items)
+
+    def crop_finished(self, cropped: int, failed: int) -> None:
+        if self._crop_btn is not None and self._crop_btn.winfo_exists():
+            self._crop_btn.configure(state="normal", text="Recortar miniaturas")
+        text = f"{cropped} capa(s) recortada(s)"
+        if failed:
+            text += f"; {failed} nao deu para recortar"
+        if self._bulk_label is not None and self._bulk_label.winfo_exists():
+            self._bulk_label.configure(text=text + ".")
+
+    def _set_bulk_text(self, button: str, label: str, busy: bool) -> None:
+        if self._bulk_btn is not None and self._bulk_btn.winfo_exists():
+            self._bulk_btn.configure(text=button, state="disabled" if busy else "normal")
+        if self._bulk_label is not None and self._bulk_label.winfo_exists():
+            self._bulk_label.configure(text=label)
 
     @staticmethod
     def _make_cover_image(data: bytes) -> ctk.CTkImage | None:

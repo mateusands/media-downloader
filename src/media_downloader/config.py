@@ -15,6 +15,8 @@ SUPPORTED_SITES_URL = "https://github.com/yt-dlp/yt-dlp/blob/master/supportedsit
 ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 ITUNES_ARTWORK_SIZE = 600
 CATALOG_USER_AGENT = "MediaDownloader/1.0 (metadata lookup)"
+# ~20 pedidos por minuto e o que o iTunes tolera antes de responder 403.
+CATALOG_MIN_INTERVAL_SECONDS = 3.0
 COVER_PREVIEW_SIZE = 88
 CATALOG_RESULTS_SHOWN = 5
 SUPPORTED_PLATFORM_NAMES = (
