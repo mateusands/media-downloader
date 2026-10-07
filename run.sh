@@ -4,6 +4,8 @@
 #   ./run.sh              executa o aplicativo
 #   ./run.sh --atualizar  atualiza o yt-dlp antes de executar
 #   ./run.sh --verificar  so checa o ambiente e sai, sem abrir a janela
+#   ./run.sh --instalar-atalho  cria o atalho "mediadownloader" no menu de aplicativos
+#   ./run.sh --remover-atalho   remove esse atalho
 #   ./run.sh --ajuda      mostra esta ajuda
 #
 # Resolve tudo a partir da propria localizacao, entao funciona de qualquer
@@ -22,15 +24,46 @@ ok()     { printf '\033[0;32m%s\033[0m\n' "$*"; }
 
 atualizar=0
 verificar=0
+acao_atalho=""
 for arg in "${@:-}"; do
     case "$arg" in
         ""|-)                 ;;
         -u|--atualizar)       atualizar=1 ;;
         -v|--verificar)       verificar=1 ;;
-        -h|--ajuda)           sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^#\s\?//'; exit 0 ;;
+        --instalar-atalho)    acao_atalho=instalar ;;
+        --remover-atalho)     acao_atalho=remover ;;
+        -h|--ajuda)           sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^#\s\?//'; exit 0 ;;
         *)                    erro "Opcao desconhecida: $arg"; erro "Use --ajuda."; exit 2 ;;
     esac
 done
+
+# ── Atalho no menu de aplicativos ────────────────────────────────────────────
+# O .desktop e gerado aqui, e nao versionado, porque Exec e Icon exigem caminho
+# absoluto e ele muda de maquina para maquina.
+if [[ -n "$acao_atalho" ]]; then
+    destino="${XDG_DATA_HOME:-$HOME/.local/share}/applications/mediadownloader.desktop"
+    if [[ "$acao_atalho" == remover ]]; then
+        rm -f "$destino"
+        ok "Atalho removido."
+    else
+        mkdir -p "$(dirname "$destino")"
+        cat > "$destino" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=mediadownloader
+Comment=Baixa musicas e videos do YouTube e de outras plataformas
+Exec="$RAIZ/run.sh"
+Icon=$RAIZ/assets/media-downloader-icon.png
+Path=$RAIZ
+Terminal=false
+Categories=AudioVideo;Audio;Video;
+DESKTOP
+        chmod +x "$destino"
+        command -v update-desktop-database >/dev/null && update-desktop-database "$(dirname "$destino")" 2>/dev/null || true
+        ok "Atalho criado: $destino"
+    fi
+    exit 0
+fi
 
 # ── Ambiente virtual ─────────────────────────────────────────────────────────
 # O venv traz o proprio pip, o que resolve de uma vez os dois tropecos das
