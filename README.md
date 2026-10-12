@@ -1,60 +1,60 @@
 # Media Downloader
 
-Aplicacao desktop com interface grafica (CustomTkinter) para download de video e audio de plataformas compativeis com o yt-dlp.
+Desktop application with a graphical interface (CustomTkinter) for downloading video and audio from platforms compatible with yt-dlp.
 
-## Funcionalidades
+## Features
 
-- Download de videos em MP4 (melhor qualidade disponivel)
-- Extracao de audio em MP3 (192 kbps)
-- Opcao de adicionar ao MP3 a capa e os dados disponiveis na plataforma
-- Busca guiada de artista, faixa, album, ano e capa quando um MP3 termina sem dados completos
-- Aceita links HTTP/HTTPS e delega a compatibilidade de cada plataforma ao yt-dlp
-- Deteccao automatica de playlists do YouTube, com escolha dos itens antes de baixar
-- Playlist retomavel: o que ja foi baixado fica registrado e vem desmarcado na proxima vez
-- MP3 com o nome da musica (`Every Breath You Take.mp3`, sem artista nem "(Official Video)"); a ordem da
-  playlist fica no numero da faixa
-- Botao de cancelar que preserva o que ja terminou
-- Barra de progresso em tempo real
-- Downloads organizados automaticamente em pastas separadas
-- Interface grafica moderna e responsiva
-- Lista de plataformas populares na tela inicial e acesso a lista oficial atualizada
+- Download videos in MP4 (best available quality)
+- Extract audio as MP3 (192 kbps)
+- Option to add the cover art and metadata available on the platform to MP3 files
+- Guided search for artist, track, album, year, and cover art when an MP3 finishes with incomplete metadata
+- Accepts HTTP/HTTPS links and delegates platform compatibility checks to yt-dlp
+- Automatic YouTube playlist detection, with item selection before downloading
+- Resumable playlists: previously downloaded items are recorded and unchecked the next time
+- MP3 files named after the song (`Every Breath You Take.mp3`, without the artist or "(Official Video)");
+  playlist order is stored in the track number
+- Cancel button that preserves completed downloads
+- Real-time progress bar
+- Downloads automatically organized into separate folders
+- Modern, responsive graphical interface
+- Popular platform examples on the home screen and access to the current official list
 
-## Plataformas compativeis
+## Supported platforms
 
-O aplicativo funciona com extratores do yt-dlp. A tela inicial mostra YouTube, Vimeo, TikTok,
-Instagram, SoundCloud e Dailymotion como exemplos, mas a lista completa muda com frequencia. Consulte
-a [lista oficial de plataformas suportadas pelo yt-dlp](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
-para a referencia atual. A compatibilidade de um link especifico depende do site e da disponibilidade do conteudo.
+The application works with yt-dlp extractors. The home screen shows YouTube, Vimeo, TikTok,
+Instagram, SoundCloud, and Dailymotion as examples, but the full list changes frequently. See the
+[official list of platforms supported by yt-dlp](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
+for the current reference. Compatibility for a specific link depends on the site and content availability.
 
-## Requisitos
+## Requirements
 
-Do sistema:
+System requirements:
 
-- **Python 3.10+** (desenvolvido e testado no 3.14)
-- **[FFmpeg](https://ffmpeg.org/)** — obrigatorio. Converte o audio para MP3 e junta video e audio no MP4;
-  sem ele o download parece progredir e falha na conversao.
-- **Tk** — o Tkinter acompanha o Python no Windows e no macOS, mas em varias distribuicoes Linux e um
-  pacote separado (`tk` no Arch, `python3-tk` no Debian e Ubuntu). Sem ele a janela nao abre.
-- **Um runtime JavaScript** — [Deno](https://deno.com/) (preferido), Node ou Bun. Desde o yt-dlp 2025.11 o
-  YouTube exige um para liberar os formatos; o app usa o primeiro que encontrar no `PATH`. Sem nenhum, o
-  YouTube entrega poucos formatos ou nenhum. `./run.sh --verificar` mostra qual foi escolhido.
+- **Python 3.10+** (developed and tested on 3.14)
+- **[FFmpeg](https://ffmpeg.org/)** — required. Converts audio to MP3 and merges video and audio into MP4;
+  without it, the download appears to progress but fails during conversion.
+- **Tk** — Tkinter comes with Python on Windows and macOS, but on many Linux distributions it is a
+  separate package (`tk` on Arch, `python3-tk` on Debian and Ubuntu). Without it, the window will not open.
+- **A JavaScript runtime** — [Deno](https://deno.com/) (preferred), Node, or Bun. Since yt-dlp 2025.11,
+  YouTube requires one to make formats available; the app uses the first one it finds in `PATH`. Without
+  one, YouTube provides few formats or none. `./run.sh --verificar` shows which runtime was selected.
 
-Do Python, instaladas por `requirements.txt`:
+Python dependencies, installed through `requirements.txt`:
 
-| Pacote | Para que serve |
+| Package | Purpose |
 |---|---|
-| `yt-dlp` | download e extracao dos metadados da origem |
-| `customtkinter` | widgets da interface dark mode |
-| `mutagen` | leitura e escrita de tags ID3 e capa no MP3 |
-| `pillow` | redimensiona as capas mostradas na revisao — **o app nao abre sem ele** |
+| `yt-dlp` | Downloading and extracting source metadata |
+| `customtkinter` | Dark mode interface widgets |
+| `mutagen` | Reading and writing ID3 tags and cover art in MP3 files |
+| `pillow` | Resizing covers displayed during review — **the app will not open without it** |
 
-## Instalacao
+## Installation
 
-Use um ambiente virtual. Em distribuicoes Linux recentes o pip recusa instalar no Python do sistema
-(PEP 668, `externally-managed-environment`), e em algumas o pip nem vem junto — o `venv` resolve os dois
-casos, porque traz o proprio pip.
+Use a virtual environment. On recent Linux distributions, pip refuses to install into the system Python
+(PEP 668, `externally-managed-environment`), and some do not include pip at all — `venv` solves both
+cases because it provides its own pip.
 
-**Linux e macOS**
+**Linux and macOS**
 
 ```bash
 python -m venv .venv
@@ -70,49 +70,49 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-## Como executar
+## Running the app
 
 ```bash
 .venv/bin/python src/app.py
 ```
 
-## Testes
+## Tests
 
-A logica de download, o diagnostico de metadata e a busca no catalogo ficam fora da camada grafica, entao a
-suite roda sem abrir janela e sem acessar a rede:
+Download logic, metadata diagnostics, and catalog searches are separate from the graphical layer, so the
+suite runs without opening a window or accessing the network:
 
 ```bash
 .venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
 .venv/bin/python -m pytest
 ```
 
-## Problemas comuns
+## Common issues
 
-- **`HTTP Error 403: Forbidden`, ou erro de extracao que apareceu do nada** — quase sempre e o yt-dlp
-  desatualizado. As plataformas mudam com frequencia e a versao instalada para de funcionar sem nada ter
-  mudado no codigo: `.venv/bin/python -m pip install -U yt-dlp`.
-- **O download chega a 100% e falha na conversao** — FFmpeg ausente do PATH. A mensagem do yt-dlp nao diz
-  isso com todas as letras.
-- **`error: externally-managed-environment` na instalacao** — o comando foi rodado fora do ambiente
-  virtual; veja a secao de instalacao.
-- **`ModuleNotFoundError: No module named 'tkinter'`** — falta o pacote de sistema do Tk.
+- **`HTTP Error 403: Forbidden`, or an extraction error that appeared unexpectedly** — usually caused by
+  an outdated yt-dlp installation. Platforms change frequently, and the installed version can stop working
+  without any code changes: `.venv/bin/python -m pip install -U yt-dlp`.
+- **The download reaches 100% and fails during conversion** — FFmpeg is missing from PATH. The yt-dlp
+  message does not state this clearly.
+- **`error: externally-managed-environment` during installation** — the command was run outside the
+  virtual environment; see the installation section.
+- **`ModuleNotFoundError: No module named 'tkinter'`** — the Tk system package is missing.
 
-## Estrutura do projeto
+## Project structure
 
 ```
 media-downloader/
 ├── src/
-│   ├── app.py                  # ponto de entrada
+│   ├── app.py                  # entry point
 │   └── media_downloader/
-│       ├── config.py           # caminhos, servicos externos e limites
-│       ├── theme.py            # paleta e tipografia
-│       ├── models.py           # dados que atravessam a fila
-│       ├── metadata.py         # catalogo do iTunes e tags do arquivo
-│       ├── downloader.py       # download e relato de falhas
-│       ├── widgets.py          # widgets reutilizaveis
-│       ├── review.py           # revisao de metadata
-│       ├── selection.py        # escolha dos itens da playlist
-│       └── window.py           # janela principal
+│       ├── config.py           # paths, external services, and limits
+│       ├── theme.py            # palette and typography
+│       ├── models.py           # data passed through the queue
+│       ├── metadata.py         # iTunes catalog and file tags
+│       ├── downloader.py       # downloads and failure reporting
+│       ├── widgets.py          # reusable widgets
+│       ├── review.py           # metadata review
+│       ├── selection.py        # playlist item selection
+│       └── window.py           # main window
 ├── tests/
 │   ├── test_url.py
 │   ├── test_caminhos.py
@@ -141,55 +141,56 @@ media-downloader/
 └── README.md
 ```
 
-A pasta `Downloads/` e suas subpastas sao criadas automaticamente ao realizar o primeiro download.
+The `Downloads/` folder and its subfolders are created automatically on the first download.
 
-## Capa e metadata em MP3
+## MP3 cover art and metadata
 
-Selecione **Audio MP3** e marque **Adicionar capa e metadados** antes de iniciar. O app incorpora os dados
-enviados pela plataforma.
+Select **MP3 audio** ("Audio MP3") and check **Add cover art and metadata** ("Adicionar capa e metadados")
+before starting. The app embeds the metadata provided by the platform.
 
-Em video comum do YouTube a plataforma nao publica o campo de artista: o yt-dlp grava no MP3 o nome do
-canal (por exemplo `AudioslaveVEVO`) e usa a miniatura do video como capa. Isso e um artista **provisorio**,
-nao um arquivo sem artista — e o que a tela de revisao informa, nomeando o canal que virou tag.
+For ordinary YouTube videos, the platform does not publish an artist field: yt-dlp writes the channel
+name (for example, `AudioslaveVEVO`) into the MP3 and uses the video thumbnail as cover art. This is a
+**provisional** artist, rather than a file with no artist — the review screen explains this and names
+the channel used for the tag.
 
-A capa tambem e provisoria: a miniatura do YouTube e 16:9, um quadro do video, e nao arte de album. Por
-isso a revisao abre tambem quando so a capa esta nessa condicao — e a arte quadrada do catalogo substitui
-o quadro do video na importacao.
+The cover art is also provisional: YouTube thumbnails are 16:9 video frames, rather than album artwork.
+The review therefore opens even when only the cover has this issue — square artwork from the catalog
+replaces the video frame when imported.
 
-Esses itens ficam separados das falhas de download. Para cada um, a tela mostra a previa do que ja esta
-gravado no arquivo (capa e artista) e um botao de busca. A busca usa a API do iTunes: cada resultado ja
-vem com faixa, artista, album, ano e a capa do album. Escolha um para importar. Em playlists, cada item
-pendente fica listado individualmente.
+These items are kept separate from download failures. For each one, the screen shows a preview of what
+is already embedded in the file (cover and artist) and a search button. The search uses the iTunes API:
+each result already includes the track, artist, album, year, and album cover. Choose a result to import.
+In playlists, each item awaiting review is listed individually.
 
-Com **Aplicar sozinho** marcado (vem marcado junto com a opcao de metadata), o app busca no catalogo ao fim
-do download e grava sem perguntar apenas quando artista, titulo e duracao (ate 5 s de diferenca) batem
-juntos. Versao ao vivo, remix ou acustica nunca conta como a mesma faixa. O que ficar em duvida — titulo sem
-"Artista - Musica", clipe com introducao longa, varios resultados parecidos — vai para a revisao. Em
-playlist, a posicao do item tambem vira o numero da faixa. Desmarcada a opcao, nada e gravado sem a sua
-escolha.
+With **Apply automatically** ("Aplicar sozinho") checked (enabled by default alongside the metadata option),
+the app searches the catalog after downloading and writes metadata without asking only when artist,
+title, and duration (within 5 seconds) all match. Live, remix, and acoustic versions never count as the
+same track. Uncertain cases — titles without "Artist - Song", videos with long introductions, multiple
+similar results — go to review. For playlists, the item's position also becomes its track number.
+With the option unchecked, nothing is written without your selection.
 
-O catalogo do iTunes e comercial: cobre bem o que esta a venda nas lojas e nao encontra bootleg,
-lancamento independente fora das plataformas ou gravacao rara.
+The iTunes catalog is commercial: it covers music sold in stores well, but does not find bootlegs,
+independent releases unavailable on platforms, or rare recordings.
 
-## 🤖 Uso de IA
+## 🤖 AI use
 
-Transparência importa aqui, então: este projeto foi construído com auxílio de inteligência artificial usada
-como assistente ao longo do desenvolvimento e da manutenção.
+Transparency matters here: this project was built with artificial intelligence acting as an assistant
+throughout development and maintenance.
 
-Na prática, a IA entra no trabalho repetitivo e de baixo nível: escrever o código de um caminho já decidido,
-converter ícones, redigir e atualizar documentação, montar scripts de validação, procurar o ponto exato de um
-defeito. As decisões de escopo, arquitetura e desenho são humanas, e toda mudança passa por revisão de gente
-antes de entrar — inclusive as que a IA escreveu por inteiro.
+In practice, AI handles repetitive and low-level work: writing code for an approach already decided on,
+converting icons, drafting and updating documentation, creating validation scripts, and locating the
+exact source of a defect. Scope, architecture, and design decisions are human, and every change undergoes
+human review before being included — even changes written entirely by AI.
 
-As regras que o assistente segue neste repositório estão versionadas em [AGENTS.md](AGENTS.md): são as mesmas
-que valem para qualquer pessoa que mexa no código.
+The rules the assistant follows in this repository are versioned in [AGENTS.md](AGENTS.md): the same
+rules apply to anyone working on the code.
 
-## Licenca
+## License
 
-Distribuido sob a [Licenca MIT](LICENSE.md). As dependencias de terceiros mantem as licencas
-delas — a nota no fim do arquivo lista quais sao.
+Distributed under the [MIT License](LICENSE.md). Third-party dependencies retain their own licenses —
+the note at the end of that file lists them.
 
-## Aviso de uso
+## Usage notice
 
-Este projeto e apenas para fins educacionais. O usuario e responsavel por respeitar os termos de uso das
-plataformas e as leis de direitos autorais.
+This project is for educational purposes only. Users are responsible for respecting platform terms of
+use and copyright laws.

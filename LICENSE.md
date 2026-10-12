@@ -22,16 +22,16 @@ SOFTWARE.
 
 ---
 
-## Sobre as dependencias
+## About dependencies
 
-Este projeto usa, sem redistribuir, software de terceiros com licencas proprias —
-entre eles [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense),
+This project uses, without redistributing, third-party software with its own licenses —
+including [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense),
 [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) (MIT),
 [mutagen](https://github.com/quodlibet/mutagen) (GPL-2.0-or-later),
-[Pillow](https://github.com/python-pillow/Pillow) (MIT-CMU) e o
-[FFmpeg](https://ffmpeg.org/) (LGPL ou GPL, conforme a compilacao). A licenca acima
-cobre apenas o codigo deste repositorio.
+[Pillow](https://github.com/python-pillow/Pillow) (MIT-CMU), and
+[FFmpeg](https://ffmpeg.org/) (LGPL or GPL, depending on the build). The license above
+covers only the code in this repository.
 
-Os metadados e as capas vem da [API de busca do iTunes](https://itunes.apple.com/search),
-publica e sem autenticacao; o uso segue os termos da Apple. A arte pertence aos
-detentores dos direitos de cada obra e nao e redistribuida por este projeto.
+Metadata and cover art come from the [iTunes Search API](https://itunes.apple.com/search),
+which is public and requires no authentication; use is subject to Apple's terms. Artwork
+belongs to the rights holders of each work and is not redistributed by this project.
