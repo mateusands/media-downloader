@@ -1,7 +1,7 @@
-"""Janela principal: consome a fila do backend por polling (QTimer de 100 ms).
+"""Main window: consumes the backend queue by polling (a 100 ms QTimer).
 
-Nenhuma thread toca widget. O backend publica na fila; `_poll` drena e
-`_handle` despacha — o mesmo padrao de antes da troca para Qt.
+No thread touches a widget. The backend publishes to the queue; `_poll` drains it
+and `_handle` dispatches — the same pattern as before the switch to Qt.
 """
 
 import os
@@ -62,7 +62,7 @@ from .widgets import (
 
 _QUALITY_CHIPS = (("best", "Melhor"), ("1080", "1080p"), ("720", "720p"),
                   ("480", "480p"), ("360", "360p"))
-# Espera a pessoa parar de digitar antes de consultar o link.
+# Waits for the user to stop typing before querying the link.
 _PROBE_DELAY_MS = 600
 
 
@@ -228,7 +228,7 @@ class MediaDownloaderApp(QMainWindow):
         row = QHBoxLayout(holder)
         row.setContentsMargins(40, 34, 40, 34)
         content = QWidget()
-        # Linha de leitura confortavel: em tela larga o conteudo nao se espalha.
+        # Comfortable line length: on a wide screen the content does not spread out.
         content.setMaximumWidth(820)
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -282,14 +282,14 @@ class MediaDownloaderApp(QMainWindow):
         self.paste_btn.clicked.connect(self._paste_url)
         row.addWidget(self.paste_btn)
         self._url_bar = bar
-        # A borda acompanha o foco do campo, que e o que a pessoa enxerga.
+        # The border follows the field's focus, which is what the user sees.
         self.url_entry.installEventFilter(self)
         layout.addWidget(bar)
         self._url_hint = label("", "small")
         self._url_hint.hide()
         layout.addWidget(self._url_hint)
 
-    def eventFilter(self, watched, event) -> bool:  # noqa: N802 — API do Qt
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 — Qt API
         if watched is self.url_entry and event.type() in (event.Type.FocusIn, event.Type.FocusOut):
             set_prop(self._url_bar, "focused", event.type() == event.Type.FocusIn)
         return super().eventFilter(watched, event)
@@ -470,14 +470,14 @@ class MediaDownloaderApp(QMainWindow):
         layout.addStretch(1)
         return scroll
 
-    # ── Navegacao ─────────────────────────────────────────────────────────────
+    # ── Navigation ────────────────────────────────────────────────────────────
 
     def _show_page(self, page: int) -> None:
         if page == 1:
             self._refresh_history()
         self._pages.setCurrentIndex(page)
         self._nav.button(page).setChecked(True)
-        # No historico nao ha link: o progresso segue a vista, o "Baixar" nao.
+        # The history page has no link: progress stays visible, the "Baixar" button does not.
         self.download_btn.setVisible(page == 0)
 
     def _refresh_history(self) -> None:
@@ -542,7 +542,7 @@ class MediaDownloaderApp(QMainWindow):
         layout.addWidget(folder_btn)
         return row
 
-    # ── Link e previa ─────────────────────────────────────────────────────────
+    # ── Link and preview ──────────────────────────────────────────────────────
 
     def _focus_url(self) -> None:
         self._show_page(0)
@@ -550,13 +550,13 @@ class MediaDownloaderApp(QMainWindow):
         self.url_entry.selectAll()
 
     def _paste_url(self) -> None:
-        """'Colar' troca o campo inteiro: e atalho para 'poe o link aqui'."""
+        """'Colar' replaces the whole field: it is a shortcut for 'put the link here'."""
         text = QGuiApplication.clipboard().text().strip()
         if text:
             self.url_entry.setText(text)
 
     def _on_app_state(self, state) -> None:
-        """Ao voltar para a janela com um link copiado e o campo vazio, ja preenche."""
+        """When returning to the window with a copied link and an empty field, fill it in."""
         if state != Qt.ApplicationState.ApplicationActive or self.url_entry.text().strip():
             return
         if self._thread and self._thread.is_alive():
@@ -567,11 +567,11 @@ class MediaDownloaderApp(QMainWindow):
             self.url_entry.setText(text)
             self._set_hint("Link colado da área de transferência.")
 
-    def dragEnterEvent(self, event) -> None:  # noqa: N802 — API do Qt
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt API
         if event.mimeData().hasUrls() or event.mimeData().hasText():
             event.acceptProposedAction()
 
-    def dropEvent(self, event) -> None:  # noqa: N802 — API do Qt
+    def dropEvent(self, event) -> None:  # noqa: N802 — Qt API
         data = event.mimeData()
         text = data.urls()[0].toString() if data.hasUrls() else data.text()
         if text.strip() and not (self._thread and self._thread.is_alive()):
@@ -600,7 +600,7 @@ class MediaDownloaderApp(QMainWindow):
         if not self._valid_url(url):
             return
         self._preview_card.show_loading()
-        # Previa nao e download: corre ao lado e nao entra na guarda de "um por vez".
+        # A preview is not a download: it runs alongside and is outside the "one at a time" guard.
         threading.Thread(target=self._manager.probe, args=(url,), daemon=True).start()
 
     def _apply_preview(self, preview: MediaPreview) -> None:
@@ -617,7 +617,7 @@ class MediaDownloaderApp(QMainWindow):
         self._update_quality_availability()
         self._update_clip_availability()
 
-    # ── Formato, qualidade e opcoes ───────────────────────────────────────────
+    # ── Format, quality, and options ──────────────────────────────────────────
 
     def _set_format(self, value: str) -> None:
         self._format = value
@@ -629,14 +629,14 @@ class MediaDownloaderApp(QMainWindow):
         self._mp4_card.setSelected(not mp3)
         self._quality_card.setVisible(not mp3)
         self.metadata_row.setAvailable(mp3, "Capa e metadados são do MP3.")
-        # A aplicacao automatica so existe dentro da opcao de metadata.
+        # Automatic application only exists inside the metadata option.
         self.auto_metadata_row.setAvailable(
             mp3 and self.metadata_row.isChecked(), "Ligue \"Capa e metadados\" primeiro.")
         self.subtitles_row.setAvailable(not mp3, "Legendas só existem no vídeo.")
         self.chapters_row.setAvailable(not mp3, "Capítulos só existem no vídeo.")
 
     def _update_quality_availability(self) -> None:
-        """Nao oferece 1080p para um video que so existe em 480p."""
+        """Does not offer 1080p for a video that only exists in 480p."""
         top = self._preview.heights[0] if self._preview and self._preview.heights else None
         for value, chip in self._quality_buttons.items():
             available = value == "best" or top is None or int(value) <= top
@@ -651,7 +651,7 @@ class MediaDownloaderApp(QMainWindow):
                 return value
         return "best"
 
-    # ── Trecho ────────────────────────────────────────────────────────────────
+    # ── Section ───────────────────────────────────────────────────────────────
 
     def _update_clip_availability(self) -> None:
         playlist = bool(self._preview and self._preview.is_playlist)
@@ -702,7 +702,7 @@ class MediaDownloaderApp(QMainWindow):
         except ValueError:
             return None, None, "Fim não é um tempo — use 1:30, 90 ou 1:02:03."
         duration = self._preview.duration if self._preview else None
-        # O fim igual a duracao e "ate o final": nao e corte nenhum ali.
+        # An end equal to the duration means "to the end": there is no cut there.
         if end is not None and duration and abs(end - duration) < 0.05:
             end = None
         return start, end, clip_error(start, end, duration)
@@ -747,7 +747,7 @@ class MediaDownloaderApp(QMainWindow):
             skip_sponsors=self.sponsors_row.isChecked(),
         )
 
-    # ── Acoes ─────────────────────────────────────────────────────────────────
+    # ── Actions ───────────────────────────────────────────────────────────────
 
     def _busy(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
@@ -774,7 +774,7 @@ class MediaDownloaderApp(QMainWindow):
         )
 
     def fix_music_folder(self) -> None:
-        """Corrige capa e metadata de MP3 que ja estavam no disco."""
+        """Fixes cover art and metadata of MP3 files already on disk."""
         if self._busy():
             QMessageBox.warning(self, "Operação em andamento",
                                 "Aguarde o download atual terminar antes de corrigir uma pasta.")
@@ -878,7 +878,7 @@ class MediaDownloaderApp(QMainWindow):
             self._set_status(event.get("message", ""))
 
         elif etype == "preview":
-            # A pessoa pode ter trocado o link enquanto a previa carregava.
+            # The user may have replaced the link while the preview was loading.
             if event["url"] == self.url_entry.text().strip():
                 self._apply_preview(event["preview"])
 
@@ -1018,7 +1018,7 @@ class MediaDownloaderApp(QMainWindow):
             + (f", {failed} com falha" if failed else "")
             + (f", {pending} com metadata a confirmar" if pending else ""))
         self._info_label.setText(f"Destino: {s.target_dir}")
-        # Pisca na barra de tarefas: o download longo terminou com a janela atras.
+        # Flash in the taskbar: the long download finished with the window in the background.
         QApplication.alert(self)
         if self._pages.currentIndex() == 1:
             self._refresh_history()
@@ -1057,7 +1057,7 @@ class MediaDownloaderApp(QMainWindow):
 
     @staticmethod
     def _short_path(path: Path, limit: int = 70) -> str:
-        # O fim do caminho e o que diz onde o arquivo cai.
+        # The end of the path is what tells where the file lands.
         text = str(path)
         return text if len(text) <= limit else "…" + text[-(limit - 1):]
 

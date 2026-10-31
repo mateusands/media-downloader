@@ -1,8 +1,8 @@
-"""Revisao de metadata: os dois dialogos e a previa de capa.
+"""Metadata review: the two dialogs and the cover preview.
 
-Vive fora de `window.py` porque e um fluxo proprio, com estado proprio (as
-linhas em cena) e ciclo de vida proprio — os dialogos abrem e fecham sem a
-janela principal saber. `window.py` so encaminha os eventos da fila para ca.
+Lives outside `window.py` because it is a flow of its own, with its own state (the
+rows on screen) and its own lifecycle — the dialogs open and close without the
+main window knowing. `window.py` only forwards queue events here.
 """
 
 import threading
@@ -36,7 +36,7 @@ def _has_provisional_cover(item: MetadataPendingItem) -> bool:
 
 
 def _alive(widget) -> bool:
-    """O dialogo pode ter sido fechado enquanto a thread trabalhava."""
+    """The dialog may have been closed while the thread was working."""
     return widget is not None and shiboken6.isValid(widget)
 
 
@@ -84,7 +84,7 @@ def _scroll_list(layout: QVBoxLayout) -> QVBoxLayout:
 
 
 class MetadataReview:
-    """Dona dos dialogos de revisao. Nao conhece a janela principal."""
+    """Owns the review dialogs. Knows nothing about the main window."""
 
     def __init__(self, parent: QWidget, manager: DownloadManager):
         self._parent = parent
@@ -159,9 +159,9 @@ class MetadataReview:
                 grid.addWidget(crop, 2, 2)
             rows.insertWidget(rows.count() - 1, row)
 
-            # Chaveado pelo próprio item: dois pendentes podem compartilhar o
-            # caminho (o yt-dlp nem sempre informa o nome do arquivo), e aí a
-            # prévia de um sobrescrevia a linha do outro.
+            # Keyed by the item itself: two pending items may share the same
+            # path (yt-dlp does not always report the file name), and then one
+            # item's preview overwrote the other's row.
             self._metadata_review_rows[pending_item] = (
                 row, cover_label, embedded_label, search_btn,
             )
@@ -176,17 +176,17 @@ class MetadataReview:
             return
         _, cover_label, embedded_label, _ = row
         if _alive(embedded_label):
-            gravado = [f"Artista gravado: {embedded.artist or 'nenhum'}"]
+            written = [f"Artista gravado: {embedded.artist or 'nenhum'}"]
             if embedded.album:
-                gravado.append(f"álbum: {embedded.album}")
-            embedded_label.setText(" · ".join(gravado))
+                written.append(f"álbum: {embedded.album}")
+            embedded_label.setText(" · ".join(written))
         if not _alive(cover_label):
             return
         if not (embedded.cover and _show_cover(cover_label, embedded.cover)):
             cover_label.setText("Sem capa\nno arquivo")
 
     def show_embedded_unavailable(self, pending_item: MetadataPendingItem) -> None:
-        """Sem arquivo para ler, importar so produziria erro — a acao sai de cena."""
+        """With no file to read, importing would only produce an error — the action is removed."""
         row = self._metadata_review_rows.get(pending_item)
         if not row:
             return
@@ -200,7 +200,7 @@ class MetadataReview:
             search_btn.setEnabled(False)
 
     def resolve(self, pending_item: MetadataPendingItem) -> None:
-        """Item confirmado sai de cena; sem pendencia restante, a revisao fecha."""
+        """A confirmed item leaves the screen; with no pending items left, the review closes."""
         row = self._metadata_review_rows.pop(pending_item, None)
         if row and _alive(row[0]):
             row[0].hide()
@@ -212,7 +212,7 @@ class MetadataReview:
             window.close()
 
     def _toggle_bulk(self) -> None:
-        """Um clique aplica a sugestao em todos; o segundo para entre um item e outro."""
+        """One click applies the suggestion to all; a second one stops between items."""
         if self._bulk_thread and self._bulk_thread.is_alive():
             self._manager.stop_bulk()
             self._set_bulk_text("Parando...", "Termina o item atual e para.", busy=True)
@@ -264,12 +264,12 @@ class MetadataReview:
             self._bulk_label.setText(text)
 
     def start_search(self, pending_item: MetadataPendingItem) -> None:
-        """Enfileira em vez de recusar.
+        """Queues instead of refusing.
 
-        Numa playlist a pessoa clica em varios itens seguidos. Responder
-        "aguarde a busca atual terminar" transformava isso em clicar, esperar,
-        clicar de novo — a fila faz o trabalho que era da pessoa. Uma por vez
-        continua: o catalogo tem limite de requisicoes.
+        In a playlist the user clicks several items in a row. Answering
+        "wait for the current search to finish" turned that into click, wait,
+        click again — the queue does the work that used to be the user's. Still one
+        at a time: the catalog has a request limit.
         """
         if pending_item == self._searching or pending_item in self._search_queue:
             return
@@ -286,7 +286,7 @@ class MetadataReview:
         self._spawn(self._manager.search_metadata, pending_item)
 
     def search_finished(self, pending_item: MetadataPendingItem) -> None:
-        """Chamado tanto no resultado quanto no erro — a fila nao pode travar."""
+        """Called on both result and error — the queue must not get stuck."""
         if self._searching == pending_item:
             self._searching = None
         self._mark_search_button(pending_item, "Buscar metadata", busy=False)
@@ -296,10 +296,10 @@ class MetadataReview:
         row = self._metadata_review_rows.get(pending_item)
         if not row:
             return
-        botao = row[3]
-        if _alive(botao):
-            botao.setText(text)
-            botao.setEnabled(not busy)
+        button = row[3]
+        if _alive(button):
+            button.setText(text)
+            button.setEnabled(not busy)
 
     def _spawn(self, target, *args) -> threading.Thread:
         thread = threading.Thread(target=target, args=args, daemon=True)
@@ -333,18 +333,18 @@ class MetadataReview:
             cover_label = _cover_box("Carregando\ncapa...")
             grid.addWidget(cover_label, 0, 0, 2, 1)
             self._metadata_cover_labels[candidate.track_id] = cover_label
-            # O iTunes devolve nome de faixa longo ("... Live At Queen Elizabeth
-            # Theatre, Toronto, ON April 20, 2011"): quebra em vez de cortar.
+            # iTunes returns long track names ("... Live At Queen Elizabeth
+            # Theatre, Toronto, ON April 20, 2011"): wrap instead of clipping.
             grid.addWidget(label(f"{candidate.artist} — {candidate.title}", "optionTitle",
                                  wrap=True), 0, 1)
             details = " · ".join(part for part in [candidate.album, candidate.year] if part)
             grid.addWidget(label(details or "Álbum não informado", "small", wrap=True), 1, 1)
-            importar = QPushButton("Importar")
-            importar.setObjectName("primary")
-            importar.clicked.connect(
+            import_btn = QPushButton("Importar")
+            import_btn.setObjectName("primary")
+            import_btn.clicked.connect(
                 lambda _=False, item=pending_item, result=candidate, dialog=window:
                     self._start_import(item, result, dialog))
-            grid.addWidget(importar, 0, 2, 2, 1)
+            grid.addWidget(import_btn, 0, 2, 2, 1)
             rows.insertWidget(rows.count() - 1, row)
             self._spawn(self._manager.load_metadata_cover_preview, candidate)
         window.show()

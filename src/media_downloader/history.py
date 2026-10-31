@@ -1,7 +1,7 @@
-"""Historico dos arquivos baixados — sobrevive a fechar o app.
+"""History of downloaded files — survives closing the app.
 
-Guarda o caminho e nao a URL: link pode carregar parametro de sessao, e URL
-completa nao vai para saida persistente.
+Stores the path, not the URL: a link may carry session parameters, and a full
+URL does not go into persistent output.
 """
 
 import json
@@ -33,7 +33,7 @@ def _read(path: Path) -> list[dict]:
 
 
 def load_history(path: Path = HISTORY_PATH) -> list[HistoryEntry]:
-    """Do mais recente para o mais antigo; o que nao se le fica de fora."""
+    """Newest first; whatever cannot be read is left out."""
     entries = []
     for raw in reversed(_read(path)):
         try:

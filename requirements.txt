@@ -1,5 +1,5 @@
-# Piso de versao: as plataformas mudam e versao antiga passa a receber
-# HTTP 403 sem nada ter mudado no codigo.
+# Version floor: platforms change, and an old version starts getting
+# HTTP 403 without anything having changed in the code.
 yt-dlp[default]>=2026.8.19
 PySide6>=6.8
 mutagen

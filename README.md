@@ -129,13 +129,13 @@ media-downloader/
 │       └── window.py           # main window
 ├── tests/
 │   ├── test_url.py
-│   ├── test_caminhos.py
+│   ├── test_paths.py
 │   ├── test_download_manager.py
 │   ├── test_playlist.py
 │   ├── test_music_metadata.py
-│   ├── test_metadata_automatica.py
-│   ├── test_selecao.py
-│   ├── test_contraste.py
+│   ├── test_auto_metadata.py
+│   ├── test_playlist_choice.py
+│   ├── test_contrast.py
 │   └── test_ui_controls.py
 ├── assets/
 │   ├── media-downloader-icon.svg

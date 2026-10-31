@@ -1,6 +1,6 @@
-"""Icones de traco desenhados aqui, em SVG, e coloridos na hora.
+"""Stroke icons drawn here as SVG and coloured at render time.
 
-Um pacote de icones seria mais uma dependencia para uma duzia de desenhos.
+An icon package would be one more dependency for a dozen drawings.
 """
 
 from functools import lru_cache

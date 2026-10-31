@@ -1,4 +1,4 @@
-"""Dados imutaveis que atravessam a fila entre backend e interface."""
+"""Immutable data that crosses the queue between backend and interface."""
 
 import re
 from dataclasses import dataclass, field
@@ -14,18 +14,18 @@ class DownloadSummary:
     metadata_pending_items: list["MetadataPendingItem"] = field(default_factory=list)
     metadata_auto_applied: list[str] = field(default_factory=list)
     already_downloaded_count: int = 0
-    # Correcao de pasta: MP3 com titulo, artista, album e capa quadrada, que nao se toca.
+    # Folder fix: MP3 files with title, artist, album, and square cover art, left untouched.
     already_complete_count: int = 0
     total_items: int = 0
     target_dir: str = ""
     playlist_mode: bool = False
-    # Caminhos finais — depois da conversao, do nome da musica e do sufixo de trecho.
+    # Final paths — after conversion, the song name, and the section suffix.
     finished_files: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class MediaOptions:
-    """O que a pessoa escolheu alem do formato. Trecho so vale fora de playlist."""
+    """What the user chose besides the format. A section applies only outside playlists."""
     quality: str = "best"
     clip_start: float | None = None
     clip_end: float | None = None
@@ -40,7 +40,7 @@ class MediaOptions:
 
 @dataclass(frozen=True)
 class MediaPreview:
-    """O que o link e, antes de baixar: alimenta a regua do trecho e as qualidades."""
+    """What the link is, before downloading: feeds the section ruler and the qualities."""
     url: str
     title: str
     uploader: str | None = None
@@ -57,14 +57,14 @@ class MetadataPendingItem:
     title: str
     file_path: str
     review_reasons: tuple[str, ...]
-    # O que a correspondencia automatica compara com o catalogo.
+    # What automatic matching compares against the catalog.
     duration: float | None = None
     source_artist: str | None = None
 
 
 @dataclass(frozen=True)
 class PlaylistEntry:
-    """Uma linha da escolha de itens: posicao original na playlist e historico."""
+    """One row of the item selection: original playlist position and history."""
     index: int
     title: str
     archive_id: str | None
@@ -74,7 +74,7 @@ class PlaylistEntry:
 
 @dataclass(frozen=True)
 class EmbeddedMetadata:
-    """O que já está gravado no MP3 — lido do arquivo, não inferido."""
+    """What is already written in the MP3 — read from the file, not inferred."""
     artist: str | None = None
     title: str | None = None
     album: str | None = None
@@ -87,8 +87,8 @@ class MusicSearchSuggestion:
     artist: str | None = None
 
 
-# A arte vem em miniatura de 100 px e o tamanho faz parte da URL; a extensão
-# muda de resultado para resultado, então não pode ser fixada em ".jpg".
+# Artwork comes as a 100 px thumbnail and the size is part of the URL; the extension
+# varies from result to result, so it cannot be hardcoded as ".jpg".
 _ARTWORK_SIZE_SUFFIX = re.compile(r"/\d+x\d+bb\.(jpg|png)$", flags=re.IGNORECASE)
 
 

@@ -1,4 +1,4 @@
-"""MP3 que ja estao no disco — nao conhece widget nem fila."""
+"""MP3 files already on disk — knows nothing about widgets or the queue."""
 
 from io import BytesIO
 from pathlib import Path
@@ -8,7 +8,7 @@ from mutagen.id3 import APIC, ID3, ID3NoHeaderError
 from mutagen.mp3 import MP3
 from PIL import Image
 
-from .metadata import PROPORCAO_QUADRADA
+from .metadata import SQUARE_RATIO
 from .models import MetadataPendingItem
 
 
@@ -29,7 +29,7 @@ def _first_text(tags: ID3 | None, frame_id: str) -> str | None:
 
 
 def _cover_reason(tags: ID3 | None) -> str | None:
-    """Arte de album e quadrada; a miniatura 16:9 do video e capa provisoria."""
+    """Album art is square; the video's 16:9 thumbnail is provisional cover art."""
     covers = tags.getall("APIC") if tags is not None else []
     if not covers:
         return "capa ausente"
@@ -38,13 +38,13 @@ def _cover_reason(tags: ID3 | None) -> str | None:
             width, height = image.size
     except Exception:
         return "capa ilegivel"
-    if PROPORCAO_QUADRADA[0] <= width / height <= PROPORCAO_QUADRADA[1]:
+    if SQUARE_RATIO[0] <= width / height <= SQUARE_RATIO[1]:
         return None
     return "capa provisoria: miniatura do video"
 
 
 def square_cover(data: bytes) -> bytes:
-    """Centro quadrado da imagem, em JPEG — a capa possivel sem arte de catalogo."""
+    """The image's square center, as JPEG — the best cover possible without catalog art."""
     with Image.open(BytesIO(data)) as image:
         rgb = image.convert("RGB")
     side = min(rgb.size)
@@ -55,7 +55,7 @@ def square_cover(data: bytes) -> bytes:
 
 
 def crop_cover_to_square(path: Path) -> None:
-    """Troca a capa do MP3 pelo recorte quadrado; as outras tags ficam."""
+    """Replaces the MP3's cover with the square crop; the other tags stay."""
     tags = ID3(path)
     covers = tags.getall("APIC")
     if not covers:
@@ -67,8 +67,8 @@ def crop_cover_to_square(path: Path) -> None:
 
 
 def read_local_item(path: Path, artist_hint: str | None) -> MetadataPendingItem:
-    """O MP3 do disco como pendencia: o que esta gravado manda, o nome so supre a falta."""
-    # MP3() levanta para o que nao e audio — arquivo ilegivel e falha, nao "sem tags".
+    """An MP3 on disk as a pending item: what is written wins; the name only fills gaps."""
+    # MP3() raises for anything that is not audio — an unreadable file is a failure, not "no tags".
     duration = MP3(path).info.length or None
     try:
         tags = ID3(path)

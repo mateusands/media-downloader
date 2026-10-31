@@ -1,4 +1,4 @@
-"""Resumo do link antes de baixar — puro, a partir do que o yt-dlp extraiu."""
+"""Link summary before downloading — pure, built from what yt-dlp extracted."""
 
 from typing import Any
 from urllib.request import Request, urlopen
@@ -7,7 +7,7 @@ from .clip import youtube_start_hint
 from .config import CATALOG_USER_AGENT
 from .models import MediaPreview
 
-# Miniatura do YouTube em maxres passa de 200 KB; acima disso nao e miniatura.
+# A maxres YouTube thumbnail is over 200 KB; anything above this is not a thumbnail.
 _THUMBNAIL_MAX_BYTES = 4 * 1024 * 1024
 
 
@@ -36,7 +36,7 @@ def preview_from_info(url: str, info: dict[str, Any]) -> MediaPreview:
 def thumbnail_url(info: dict[str, Any]) -> str | None:
     if info.get("thumbnail"):
         return info["thumbnail"]
-    # Playlist listada sem resolver os itens traz as miniaturas so na lista.
+    # A playlist listed without resolving its items only has thumbnails in the list.
     thumbnails = info.get("thumbnails") or []
     return thumbnails[-1].get("url") if thumbnails else None
 

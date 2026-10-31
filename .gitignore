@@ -5,12 +5,12 @@ __pycache__/
 Videos/
 Audios/
 Downloads/
-# Configuração local do assistente: skills, caderno de bordo das sessões e
-# planos de trabalho. Material de apoio, não documentação do repositório.
-# As regras do projeto ficam em AGENTS.md, esse sim versionado; CLAUDE.md é
-# apenas o ponteiro que ferramentas da Anthropic procuram.
+# Local assistant configuration: skills, session logs, and work plans.
+# Supporting material, not repository documentation.
+# The project rules live in AGENTS.md, which is versioned; CLAUDE.md is
+# only the pointer that Anthropic tools look for.
 .claude/
 CLAUDE.md
 
-# Cache do pytest
+# pytest cache
 .pytest_cache/

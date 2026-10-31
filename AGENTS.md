@@ -24,7 +24,7 @@ Portfolio project.
 
 **How it looks lives in `DESIGN.md`** (tokens, measured contrast, components, do and don't). Read it
 before touching a screen; a token change and its `DESIGN.md` line change together. Every colour comes
-from `theme.py` — `test_contraste.py` fails on a hex literal in a UI module and measures text (4.5:1)
+from `theme.py` — `test_contrast.py` fails on a hex literal in a UI module and measures text (4.5:1)
 and state indicators (3:1).
 
 ---
@@ -69,23 +69,24 @@ media-downloader/
 ├── assets/                 # master SVG icon, UI PNG, and Windows ICO
 └── tests/
     ├── test_url.py              # URL validation and classification
-    ├── test_caminhos.py         # repository root for assets and downloads
+    ├── test_paths.py            # repository root for assets and downloads
     ├── test_download_manager.py # interpreting yt-dlp results + failure reporting
     ├── test_playlist.py         # history, numbering, item selection, cancellation, JS runtime
     ├── test_music_metadata.py   # suggestions, catalog, and importing selected metadata
-    ├── test_metadata_automatica.py # confident matching and automatic application
-    ├── test_pasta_existente.py  # fixing an MP3 folder and catalog rate limits
-    ├── test_aceitar_em_lote.py  # "Apply suggestion to all" during review
-    ├── test_pasta_de_destino.py # choosing and remembering the destination folder
-    ├── test_capa_e_creditos.py  # long credits, "(Album Version)", unresponsive catalog, cropping
-    ├── test_selecao.py          # playlist item selection state
-    ├── test_contraste.py        # AA contrast (text 4.5:1, indicators 3:1) and no colour literal in UI code
-    ├── test_recorte_do_trecho.py # section download: parsing, validation, download_ranges, naming
-    ├── test_opcoes_de_video.py  # quality cap, subtitles, chapters, SponsorBlock, options in playlists
-    ├── test_previa_do_link.py   # link preview and available heights
-    ├── test_historico_de_downloads.py # history file and what a download records
-    ├── test_progresso.py        # speed and ETA in progress events
-    ├── test_regua_do_trecho.py  # RangeSlider (two-handle ruler)
+    ├── test_auto_metadata.py    # confident matching and automatic application
+    ├── test_fix_folder.py       # fixing an MP3 folder and catalog rate limits
+    ├── test_apply_to_all.py     # "Apply suggestion to all" during review
+    ├── test_destination_folder.py # choosing and remembering the destination folder
+    ├── test_cover_and_credits.py # long credits, "(Album Version)", unresponsive catalog, cropping
+    ├── test_file_name.py        # song-name file names, no overwrite, final path from MoveFiles
+    ├── test_playlist_choice.py  # playlist item selection state
+    ├── test_contrast.py         # AA contrast (text 4.5:1, indicators 3:1) and no colour literal in UI code
+    ├── test_section_download.py # section download: parsing, validation, download_ranges, naming
+    ├── test_video_options.py    # quality cap, subtitles, chapters, SponsorBlock, options in playlists
+    ├── test_link_preview.py     # link preview and available heights
+    ├── test_download_history.py # history file and what a download records
+    ├── test_progress.py         # speed and ETA in progress events
+    ├── test_clip_ruler.py       # RangeSlider (two-handle ruler)
     ├── conftest.py              # offscreen Qt app; isolates config and history from the user's
     └── test_ui_controls.py      # activating controls, preview of the current link, review dialogs
 ```
@@ -123,7 +124,7 @@ Each layer is a module, and they **must not be mixed**:
 ### 2. Backend — `downloader.py` and `metadata.py`
 
 **Has no knowledge of the UI.** Does not import widgets, call `messagebox`, or touch `root`. Communicates
-exclusively through a `queue.Queue`, publishing events with `_emit(tipo, **payload)`.
+exclusively through a `queue.Queue`, publishing events with `_emit(event_type, **payload)`.
 
 - `download(url, file_format, include_metadata, auto_metadata, options)` — single item: extracts info → downloads.
   `options` is a `MediaOptions` (quality, clip_start/clip_end, subtitles, chapters, skip_sponsors). For a
@@ -150,7 +151,7 @@ exclusively through a `queue.Queue`, publishing events with `_emit(tipo, **paylo
 - `confident_match(item, candidatos)` — the candidate that needs no review: artist, title **and** duration
   (±5 s) must all match; different versions (live, remix, acoustic) never match. `_auto_apply_metadata` uses
   it after downloading when the user has enabled automatic application.
-- `fix_folder(pasta, auto_metadata, artista)` — "Fix MP3 folder" ("Corrigir pasta MP3"):
+- `fix_folder(folder, auto_metadata, artist_hint)` — "Fix MP3 folder" ("Corrigir pasta MP3"):
   `library.read_local_item` reads each MP3 as a `MetadataPendingItem` (title and artist from tags; without
   an embedded title, the filename becomes the search query), applies confident matches through
   `_auto_apply_metadata` if requested, and publishes `folder_checked`. The artist supplied by the user
@@ -236,10 +237,9 @@ A header explains **the contract**, **why it exists** (the bug or decision that 
 
 ### 2. BDD — describe BEHAVIOR, not implementation
 
-`class Test<CenárioDeNegócio>` → `def test_deve_<resultado>_quando_<condição>`, in Portuguese, using
-operational language (download, playlist, failed item). These templates mean "Test<BusinessScenario>"
-and "test_should_<result>_when_<condition>". If the test name mentions an internal variable, it is testing
-implementation — rewrite it.
+`class Test<BusinessScenario>` → `def test_should_<result>_when_<condition>`, in English, using
+operational language (download, playlist, failed item). If the test name mentions an internal variable,
+it is testing implementation — rewrite it.
 
 ### 3. TDD — mandatory cycle
 
@@ -311,7 +311,7 @@ Conventional Commits: `feat: add quality selection`, `fix: handle private playli
    `config.py` goes up **three** levels (`config.py` → `media_downloader` → `src` → root) to find
    `Downloads/` and `assets/`. This pitfall has already occurred: when splitting `app.py` into modules,
    the old count stopped at `src/`, the icon disappeared, and the window would not open — **with the
-   suite passing**, because no test checked paths. `tests/test_caminhos.py` now covers this; moving
+   suite passing**, because no test checked paths. `tests/test_paths.py` now covers this; moving
    `config.py` requires recalculating the path.
 
 9. **iTunes artwork size is in the URL, and requesting more does not create pixels.** The API returns
@@ -369,3 +369,9 @@ Conventional Commits: `feat: add quality selection`, `fix: handle private playli
   update this file accordingly.
 - Document non-obvious technical decisions (in the commit and/or here).
 - **Do not commit or push without an explicit instruction.**
+- **Language:** code, identifiers, comments, docstrings, tests (spec headers, names, assertion
+  messages), and commit messages are in English. Text the user sees stays in Portuguese — labels,
+  buttons, status and summary lines, dialog and error messages, review reasons (code checks their
+  prefixes), and the section label in file names — and so do on-disk names that existing users
+  already have (`.historico-de-downloads.txt`, `historico.json`, the `Downloads/` subfolders).
+  Tests that compare that text keep the Portuguese literal.

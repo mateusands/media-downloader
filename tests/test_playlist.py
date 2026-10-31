@@ -1,39 +1,41 @@
 """
-SDD — Especificação: download de playlist que se retoma, se ordena e se escolhe
+SDD — Spec: playlist download that resumes, keeps its order, and lets the user choose
 
-CONTRATO
-  - `js_runtimes_for(which)` escolhe o runtime de JavaScript que o yt-dlp vai
-    usar no YouTube, entre os instalados: deno, depois node, depois bun.
-  - `_build_opts` em modo playlist grava um arquivo de histórico por pasta de
-    destino (`download_archive`), grava a posição na playlist como número da
-    faixa e espaça as requisições; em MP3, `final_ext` faz o yt-dlp reconhecer o arquivo
-    já convertido.
-  - `playlist_entries(info, archived_ids)` transforma a listagem rápida em
-    linhas que a seleção mostra, marcando o que já foi baixado antes.
-  - `playlist_items_spec(indices)` traduz a seleção para `playlist_items`.
-  - `forget_archived(path, ids)` tira do histórico o que a pessoa pediu para
-    baixar de novo.
-  - `DownloadManager.cancel()` interrompe o download em andamento e o resumo
-    chega como cancelado, não como erro.
+CONTRACT
+  - `js_runtimes_for(which)` picks the JavaScript runtime yt-dlp will use on
+    YouTube, among the installed ones: deno, then node, then bun.
+  - `_build_opts` in playlist mode keeps one history file per destination
+    folder (`download_archive`), writes the playlist position as the track
+    number, and spaces out requests; for MP3, `final_ext` makes yt-dlp
+    recognise the already converted file.
+  - `playlist_entries(info, archived_ids)` turns the quick listing into rows
+    the selection shows, marking what was downloaded before.
+  - `playlist_items_spec(indices)` translates the selection into `playlist_items`.
+  - `forget_archived(path, ids)` removes from the history what the user asked
+    to download again.
+  - `DownloadManager.cancel()` interrupts the download in progress, and the
+    summary arrives as cancelled, not as an error.
 
-POR QUE EXISTE
-  Rodar a mesma playlist duas vezes baixava tudo de novo: sem histórico e sem
-  `final_ext`, o yt-dlp procura o `.webm` que a conversão já apagou e não
-  reconhece o `.mp3` ao lado. A ordem da playlist se perdia; numerar o nome do
-  arquivo resolvia, mas a pessoa preferiu o arquivo só com o nome da música
-  (test_nome_do_arquivo.py) — a ordem ficou na tag de faixa. E desde o yt-dlp 2025.11 o
-  YouTube exige um runtime de JavaScript: só deno é ligado por padrão, então
-  uma máquina com node e sem deno recebia poucos formatos ou nenhum.
+WHY IT EXISTS
+  Running the same playlist twice downloaded everything again: without history
+  and without `final_ext`, yt-dlp looks for the `.webm` the conversion already
+  deleted and does not recognise the `.mp3` next to it. The playlist order was
+  lost; numbering the filename solved that, but the user preferred the file with
+  only the song name (test_file_name.py) — the order went into the track tag.
+  And since yt-dlp 2025.11 YouTube requires a JavaScript runtime: only deno is
+  enabled by default, so a machine with node and no deno got few formats or none.
 
-REGRA DE NEGÓCIO
-  - O histórico é por pasta de destino: MP3 baixado não impede o MP4 do mesmo
-    vídeo.
-  - Item único não usa histórico: pedir de novo o mesmo vídeo é intencional.
-  - A posição gravada é a posição ORIGINAL na playlist, mesmo quando só parte
-    dela foi escolhida.
-  - Item já baixado aparece na seleção desmarcado, nunca escondido: a pessoa
-    pode querer de novo, e aí o histórico esquece esse item.
-  - Cancelar não é falha: o que já baixou fica, e o histórico lembra.
+BUSINESS RULES
+  - The history is per destination folder: a downloaded MP3 does not prevent
+    the MP4 of the same video.
+  - A single item does not use the history: asking for the same video again is
+    intentional.
+  - The recorded position is the ORIGINAL position in the playlist, even when
+    only part of it was chosen.
+  - An already downloaded item appears unchecked in the selection, never hidden:
+    the user may want it again, and then the history forgets that item.
+  - Cancelling is not a failure: what was downloaded stays, and the history
+    remembers it.
 """
 
 import queue
@@ -63,110 +65,110 @@ def _opts(file_format="mp3", playlist_mode=True, include_metadata=False):
     )
 
 
-class TestRuntimeDeJavaScript:
-    def test_deve_preferir_deno_quando_esta_instalado(self):
-        instalados = {"deno": "/usr/bin/deno", "node": "/usr/bin/node"}
-        assert js_runtimes_for(instalados.get) == {"deno": {"path": "/usr/bin/deno"}}
+class TestJavaScriptRuntime:
+    def test_should_prefer_deno_when_it_is_installed(self):
+        installed = {"deno": "/usr/bin/deno", "node": "/usr/bin/node"}
+        assert js_runtimes_for(installed.get) == {"deno": {"path": "/usr/bin/deno"}}
 
-    def test_deve_usar_node_quando_deno_nao_esta_instalado(self):
-        instalados = {"node": "/usr/bin/node"}
-        assert js_runtimes_for(instalados.get) == {"node": {"path": "/usr/bin/node"}}
+    def test_should_use_node_when_deno_is_not_installed(self):
+        installed = {"node": "/usr/bin/node"}
+        assert js_runtimes_for(installed.get) == {"node": {"path": "/usr/bin/node"}}
 
-    def test_deve_manter_o_padrao_do_yt_dlp_quando_nenhum_runtime_esta_instalado(self):
+    def test_should_keep_the_yt_dlp_default_when_no_runtime_is_installed(self):
         assert js_runtimes_for(lambda _: None) == {"deno": {}}
 
-    def test_deve_passar_o_runtime_na_listagem_e_no_download(self, monkeypatch):
+    def test_should_pass_the_runtime_to_listing_and_download(self, monkeypatch):
         monkeypatch.setattr(
             "media_downloader.downloader.shutil.which",
-            lambda nome: "/usr/bin/node" if nome == "node" else None)
+            lambda name: "/usr/bin/node" if name == "node" else None)
         manager = DownloadManager(queue.Queue())
 
         assert manager._base_opts()["js_runtimes"] == {"node": {"path": "/usr/bin/node"}}
         assert _opts()["js_runtimes"] == {"node": {"path": "/usr/bin/node"}}
 
 
-class TestHistoricoDaPlaylist:
-    def test_deve_gravar_historico_na_pasta_de_destino_em_modo_playlist(self):
+class TestPlaylistHistory:
+    def test_should_keep_history_in_the_destination_folder_when_in_playlist_mode(self):
         assert _opts()["download_archive"] == str(Path("/tmp/destino") / ARCHIVE_FILENAME)
 
-    def test_nao_deve_usar_historico_para_item_unico(self):
+    def test_should_not_use_history_when_it_is_a_single_item(self):
         assert "download_archive" not in _opts(playlist_mode=False)
 
-    def test_deve_reconhecer_o_mp3_ja_convertido(self):
+    def test_should_recognise_the_already_converted_mp3(self):
         assert _opts("mp3")["final_ext"] == "mp3"
 
-    def test_deve_reconhecer_o_mp4_ja_juntado(self):
+    def test_should_recognise_the_already_merged_mp4(self):
         assert _opts("mp4")["final_ext"] == "mp4"
 
-    def test_deve_ler_os_ids_do_historico(self, tmp_path):
-        historico = tmp_path / ARCHIVE_FILENAME
-        historico.write_text("youtube abc\nyoutube def\n\n", encoding="utf-8")
+    def test_should_read_the_ids_from_the_history(self, tmp_path):
+        history = tmp_path / ARCHIVE_FILENAME
+        history.write_text("youtube abc\nyoutube def\n\n", encoding="utf-8")
 
-        assert archive_ids(historico) == {"youtube abc", "youtube def"}
+        assert archive_ids(history) == {"youtube abc", "youtube def"}
 
-    def test_deve_tratar_historico_inexistente_como_vazio(self, tmp_path):
+    def test_should_treat_a_missing_history_as_empty(self, tmp_path):
         assert archive_ids(tmp_path / ARCHIVE_FILENAME) == set()
 
-    def test_deve_esquecer_so_os_itens_pedidos_de_novo(self, tmp_path):
-        historico = tmp_path / ARCHIVE_FILENAME
-        historico.write_text("youtube abc\nyoutube def\nyoutube ghi\n", encoding="utf-8")
+    def test_should_forget_only_the_items_requested_again(self, tmp_path):
+        history = tmp_path / ARCHIVE_FILENAME
+        history.write_text("youtube abc\nyoutube def\nyoutube ghi\n", encoding="utf-8")
 
-        forget_archived(historico, {"youtube def"})
+        forget_archived(history, {"youtube def"})
 
-        assert historico.read_text(encoding="utf-8") == "youtube abc\nyoutube ghi\n"
+        assert history.read_text(encoding="utf-8") == "youtube abc\nyoutube ghi\n"
 
-    def test_nao_deve_criar_historico_ao_esquecer_quando_ele_nao_existe(self, tmp_path):
-        historico = tmp_path / ARCHIVE_FILENAME
-        forget_archived(historico, {"youtube abc"})
-        assert not historico.exists()
+    def test_should_not_create_history_when_forgetting_and_it_does_not_exist(self, tmp_path):
+        history = tmp_path / ARCHIVE_FILENAME
+        forget_archived(history, {"youtube abc"})
+        assert not history.exists()
 
 
-class TestNomeEOrdemDosArquivos:
-    def test_deve_manter_o_nome_so_pelo_titulo_para_item_unico(self):
+class TestFileNameAndOrder:
+    def test_should_name_by_title_only_when_it_is_a_single_item(self):
         assert _opts(playlist_mode=False)["outtmpl"]["default"] == str(
             Path("/tmp/destino") / "%(title)s.%(ext)s")
 
-    def test_nao_deve_gravar_a_capa_da_propria_playlist_na_pasta(self):
-        # Caso real: com a metadata ligada, sobrava "000 - Popular Music Videos.jpg".
+    def test_should_not_save_the_playlist_own_cover_in_the_folder(self):
+        # Real case: with metadata enabled, "000 - Popular Music Videos.jpg" was left over.
         assert _opts(include_metadata=True)["outtmpl"]["pl_thumbnail"] == ""
 
-    def test_deve_gravar_a_posicao_como_numero_da_faixa_quando_ha_metadata(self):
+    def test_should_write_the_position_as_track_number_when_there_is_metadata(self):
         pps = _opts(include_metadata=True)["postprocessors"]
         parser = next(pp for pp in pps if pp["key"] == "MetadataParser")
 
         assert parser["when"] == "pre_process"
-        assert [acao[1:] for acao in parser["actions"]] == [
+        assert [action[1:] for action in parser["actions"]] == [
             ("playlist_index", "%(track_number)s")]
 
-    def test_nao_deve_gravar_numero_da_faixa_para_item_unico(self):
+    def test_should_not_write_track_number_when_it_is_a_single_item(self):
         pps = _opts(playlist_mode=False, include_metadata=True)["postprocessors"]
         assert "MetadataParser" not in [pp["key"] for pp in pps]
 
-    def test_deve_aceitar_as_opcoes_no_yt_dlp_de_verdade(self):
-        # As chaves de pós-processador só são validadas quando o YoutubeDL monta.
+    def test_should_be_accepted_by_the_real_yt_dlp(self):
+        # Postprocessor keys are only validated when YoutubeDL is built.
         with yt_dlp.YoutubeDL(_opts(include_metadata=True)):
             pass
 
 
-class TestRitmoDasRequisicoes:
-    def test_deve_espacar_requisicoes_em_playlist(self):
+class TestRequestPacing:
+    def test_should_space_out_requests_when_in_a_playlist(self):
         opts = _opts()
         assert opts["sleep_interval_requests"] > 0
         assert 0 < opts["sleep_interval"] <= opts["max_sleep_interval"]
 
-    def test_nao_deve_atrasar_o_item_unico(self):
+    def test_should_not_delay_a_single_item(self):
         opts = _opts(playlist_mode=False)
         assert "sleep_interval" not in opts
         assert "sleep_interval_requests" not in opts
 
-    def test_deve_esperar_cada_vez_mais_entre_novas_tentativas_ate_um_teto(self):
-        espera = _opts()["retry_sleep_functions"]["http"]
-        assert [espera(n) for n in (0, 1, 2, 3)] == [1, 2, 4, 8]
-        assert espera(20) == 30
+    def test_should_wait_longer_between_retries_up_to_a_ceiling(self):
+        wait = _opts()["retry_sleep_functions"]["http"]
+        assert [wait(n) for n in (0, 1, 2, 3)] == [1, 2, 4, 8]
+        assert wait(20) == 30
 
 
-class TestListagemParaEscolha:
-    def test_deve_numerar_pela_posicao_original_mesmo_com_buracos(self):
+class TestListingForSelection:
+    def test_should_number_by_original_position_even_with_gaps(self):
         info = {"entries": [
             {"id": "a", "ie_key": "Youtube", "title": "Faixa A"},
             None,
@@ -178,29 +180,29 @@ class TestListagemParaEscolha:
             PlaylistEntry(3, "Faixa C", "youtube c", 200, False),
         ]
 
-    def test_deve_marcar_o_que_ja_esta_no_historico(self):
+    def test_should_mark_what_is_already_in_the_history(self):
         info = {"entries": [
             {"id": "a", "ie_key": "Youtube", "title": "Faixa A"},
             {"id": "b", "ie_key": "Youtube", "title": "Faixa B"},
         ]}
 
-        linhas = playlist_entries(info, {"youtube b"})
+        rows = playlist_entries(info, {"youtube b"})
 
-        assert [linha.already_downloaded for linha in linhas] == [False, True]
+        assert [row.already_downloaded for row in rows] == [False, True]
 
-    def test_deve_nomear_item_sem_titulo_pelo_id(self):
+    def test_should_name_an_untitled_item_by_its_id(self):
         info = {"entries": [{"id": "xyz", "ie_key": "Youtube"}]}
         assert playlist_entries(info, set())[0].title == "xyz"
 
-    def test_deve_traduzir_a_escolha_para_o_yt_dlp_em_ordem(self):
+    def test_should_translate_the_selection_for_yt_dlp_in_order(self):
         assert playlist_items_spec([5, 1, 3]) == "1,3,5"
 
 
-class TestDownloadDosItensEscolhidos:
-    """O fluxo em duas etapas, com o yt-dlp trocado por um registro."""
+class TestDownloadingChosenItems:
+    """The two-stage flow, with yt-dlp replaced by a recorder."""
 
-    class _YoutubeDLFalso:
-        chamadas: list = []
+    class _FakeYoutubeDL:
+        calls: list = []
         info: dict = {}
 
         def __init__(self, opts):
@@ -216,161 +218,161 @@ class TestDownloadDosItensEscolhidos:
             return self.info
 
         def download(self, urls):
-            type(self).chamadas.append(self.opts)
+            type(self).calls.append(self.opts)
 
     @pytest.fixture
-    def falso(self, monkeypatch, tmp_path):
-        falso = self._YoutubeDLFalso
-        falso.chamadas = []
-        falso.info = {"_type": "playlist", "entries": [
+    def fake(self, monkeypatch, tmp_path):
+        fake = self._FakeYoutubeDL
+        fake.calls = []
+        fake.info = {"_type": "playlist", "entries": [
             {"id": "a", "ie_key": "Youtube", "title": "Faixa A"},
             {"id": "b", "ie_key": "Youtube", "title": "Faixa B"},
             {"id": "c", "ie_key": "Youtube", "title": "Faixa C"},
         ]}
-        monkeypatch.setattr("media_downloader.downloader.yt_dlp.YoutubeDL", falso)
+        monkeypatch.setattr("media_downloader.downloader.yt_dlp.YoutubeDL", fake)
         monkeypatch.setattr(
             "media_downloader.downloader.DOWNLOAD_FOLDERS",
             {("mp3", True): tmp_path, ("mp3", False): tmp_path})
-        return falso
+        return fake
 
-    def _eventos(self, fila):
-        eventos = []
-        while not fila.empty():
-            eventos.append(fila.get_nowait())
-        return eventos
+    def _events(self, event_queue):
+        events = []
+        while not event_queue.empty():
+            events.append(event_queue.get_nowait())
+        return events
 
-    def test_deve_listar_a_playlist_e_esperar_a_escolha_antes_de_baixar(self, falso, tmp_path):
+    def test_should_list_the_playlist_and_wait_for_the_choice_before_downloading(self, fake, tmp_path):
         (tmp_path / ARCHIVE_FILENAME).write_text("youtube b\n", encoding="utf-8")
-        fila = queue.Queue()
-        manager = DownloadManager(fila)
+        event_queue = queue.Queue()
+        manager = DownloadManager(event_queue)
 
         manager.download("https://www.youtube.com/playlist?list=PLx", "mp3")
 
-        listado = [e for e in self._eventos(fila) if e["type"] == "playlist_listed"]
-        assert falso.chamadas == []
-        assert [e.already_downloaded for e in listado[0]["entries"]] == [False, True, False]
+        listed = [e for e in self._events(event_queue) if e["type"] == "playlist_listed"]
+        assert fake.calls == []
+        assert [e.already_downloaded for e in listed[0]["entries"]] == [False, True, False]
 
-    def test_deve_baixar_so_os_itens_escolhidos(self, falso):
-        fila = queue.Queue()
-        manager = DownloadManager(fila)
+    def test_should_download_only_the_chosen_items(self, fake):
+        event_queue = queue.Queue()
+        manager = DownloadManager(event_queue)
         manager.download("https://www.youtube.com/playlist?list=PLx", "mp3")
 
         manager.download_selected([1, 3])
 
-        assert falso.chamadas[0]["playlist_items"] == "1,3"
-        concluido = [e for e in self._eventos(fila) if e["type"] == "done"][0]
-        assert concluido["summary"].total_items == 2
+        assert fake.calls[0]["playlist_items"] == "1,3"
+        done = [e for e in self._events(event_queue) if e["type"] == "done"][0]
+        assert done["summary"].total_items == 2
 
-    def test_deve_contar_no_resumo_o_que_ja_estava_baixado(self, falso, tmp_path):
+    def test_should_count_in_the_summary_what_was_already_downloaded(self, fake, tmp_path):
         (tmp_path / ARCHIVE_FILENAME).write_text("youtube b\n", encoding="utf-8")
-        fila = queue.Queue()
-        manager = DownloadManager(fila)
+        event_queue = queue.Queue()
+        manager = DownloadManager(event_queue)
         manager.download("https://www.youtube.com/playlist?list=PLx", "mp3")
 
         manager.download_selected([1, 3])
 
-        concluido = [e for e in self._eventos(fila) if e["type"] == "done"][0]
-        assert concluido["summary"].already_downloaded_count == 1
+        done = [e for e in self._events(event_queue) if e["type"] == "done"][0]
+        assert done["summary"].already_downloaded_count == 1
 
-    def test_deve_esquecer_do_historico_o_item_pedido_de_novo(self, falso, tmp_path):
-        historico = tmp_path / ARCHIVE_FILENAME
-        historico.write_text("youtube a\nyoutube b\n", encoding="utf-8")
+    def test_should_forget_from_the_history_the_item_requested_again(self, fake, tmp_path):
+        history = tmp_path / ARCHIVE_FILENAME
+        history.write_text("youtube a\nyoutube b\n", encoding="utf-8")
         manager = DownloadManager(queue.Queue())
         manager.download("https://www.youtube.com/playlist?list=PLx", "mp3")
 
         manager.download_selected([2])
 
-        assert historico.read_text(encoding="utf-8") == "youtube a\n"
+        assert history.read_text(encoding="utf-8") == "youtube a\n"
 
-    def test_deve_baixar_item_unico_direto_sem_pedir_escolha(self, falso):
-        falso.info = {"id": "a", "title": "Faixa A"}
-        fila = queue.Queue()
+    def test_should_download_a_single_item_directly_without_asking_for_a_choice(self, fake):
+        fake.info = {"id": "a", "title": "Faixa A"}
+        event_queue = queue.Queue()
 
-        DownloadManager(fila).download("https://www.youtube.com/watch?v=a", "mp3")
+        DownloadManager(event_queue).download("https://www.youtube.com/watch?v=a", "mp3")
 
-        assert len(falso.chamadas) == 1
-        assert "playlist_items" not in falso.chamadas[0]
-        assert "playlist_listed" not in [e["type"] for e in self._eventos(fila)]
+        assert len(fake.calls) == 1
+        assert "playlist_items" not in fake.calls[0]
+        assert "playlist_listed" not in [e["type"] for e in self._events(event_queue)]
 
-    def test_nao_deve_abrir_a_escolha_quando_cancelaram_durante_a_listagem(
-        self, falso, monkeypatch,
+    def test_should_not_open_the_choice_when_cancelled_during_listing(
+        self, fake, monkeypatch,
     ):
-        fila = queue.Queue()
-        manager = DownloadManager(fila)
+        event_queue = queue.Queue()
+        manager = DownloadManager(event_queue)
         monkeypatch.setattr(
-            falso, "extract_info",
+            fake, "extract_info",
             lambda self, url, download=False: (manager.cancel(), self.info)[1])
 
         manager.download("https://www.youtube.com/playlist?list=PLx", "mp3")
 
-        tipos = [e["type"] for e in self._eventos(fila)]
-        assert "playlist_listed" not in tipos
-        assert tipos[-1] == "cancelled"
+        types = [e["type"] for e in self._events(event_queue)]
+        assert "playlist_listed" not in types
+        assert types[-1] == "cancelled"
 
-    def test_deve_recusar_escolha_sem_playlist_listada(self):
-        fila = queue.Queue()
-        DownloadManager(fila).download_selected([1])
-        assert [e["type"] for e in self._eventos(fila)] == ["error"]
+    def test_should_reject_a_choice_when_no_playlist_was_listed(self):
+        event_queue = queue.Queue()
+        DownloadManager(event_queue).download_selected([1])
+        assert [e["type"] for e in self._events(event_queue)] == ["error"]
 
 
-class TestCancelamento:
-    def test_deve_interromper_o_download_no_proximo_progresso(self):
-        resumo = DownloadSummary(total_items=3)
+class TestCancellation:
+    def test_should_interrupt_the_download_on_the_next_progress_update(self):
+        summary = DownloadSummary(total_items=3)
         manager = DownloadManager(queue.Queue())
-        hook = manager._make_progress_hook(resumo)
+        hook = manager._make_progress_hook(summary)
 
         manager.cancel()
 
         with pytest.raises(yt_dlp.utils.DownloadCancelled):
             hook({"status": "downloading", "downloaded_bytes": 1, "total_bytes": 10})
 
-    def test_deve_publicar_cancelado_e_nao_erro(self, monkeypatch, tmp_path):
+    def test_should_publish_cancelled_and_not_error(self, monkeypatch, tmp_path):
         manager = DownloadManager(queue.Queue())
 
-        class _Cancela(TestDownloadDosItensEscolhidos._YoutubeDLFalso):
+        class _CancellingYoutubeDL(TestDownloadingChosenItems._FakeYoutubeDL):
             def download(self, urls):
-                raise yt_dlp.utils.DownloadCancelled("cancelado")
+                raise yt_dlp.utils.DownloadCancelled("cancelled")
 
-        _Cancela.info = {"id": "a", "title": "Faixa A"}
-        monkeypatch.setattr("media_downloader.downloader.yt_dlp.YoutubeDL", _Cancela)
+        _CancellingYoutubeDL.info = {"id": "a", "title": "Faixa A"}
+        monkeypatch.setattr("media_downloader.downloader.yt_dlp.YoutubeDL", _CancellingYoutubeDL)
         monkeypatch.setattr(
             "media_downloader.downloader.DOWNLOAD_FOLDERS", {("mp3", False): tmp_path})
 
         manager.download("https://www.youtube.com/watch?v=a", "mp3")
 
-        tipos = []
+        types = []
         while not manager._q.empty():
-            tipos.append(manager._q.get_nowait()["type"])
-        assert "cancelled" in tipos
-        assert "error" not in tipos
+            types.append(manager._q.get_nowait()["type"])
+        assert "cancelled" in types
+        assert "error" not in types
 
-    def test_novo_download_deve_comecar_sem_o_cancelamento_anterior(self):
-        resumo = DownloadSummary(total_items=1)
+    def test_should_start_without_the_previous_cancellation_when_a_new_download_begins(self):
+        summary = DownloadSummary(total_items=1)
         manager = DownloadManager(queue.Queue())
         manager.cancel()
         manager._reset_cancel()
 
-        manager._make_progress_hook(resumo)(
+        manager._make_progress_hook(summary)(
             {"status": "downloading", "downloaded_bytes": 1, "total_bytes": 10})
 
 
-class TestProgressoComEscolha:
-    def test_deve_mostrar_a_contagem_do_que_foi_escolhido_e_nao_a_posicao(self):
-        fila = queue.Queue()
-        resumo = DownloadSummary(total_items=2, downloaded_count=1)
-        hook = DownloadManager(fila)._make_progress_hook(resumo)
+class TestProgressWithSelection:
+    def test_should_show_the_count_of_chosen_items_and_not_the_position(self):
+        event_queue = queue.Queue()
+        summary = DownloadSummary(total_items=2, downloaded_count=1)
+        hook = DownloadManager(event_queue)._make_progress_hook(summary)
 
         hook({"status": "downloading", "downloaded_bytes": 5, "total_bytes": 10,
               "info_dict": {"title": "Faixa C", "playlist_index": 30}})
 
-        assert fila.get_nowait()["message"] == "Baixando: Faixa C (2/2)"
+        assert event_queue.get_nowait()["message"] == "Baixando: Faixa C (2/2)"
 
 
-class TestResumoDaPlaylist:
-    def test_deve_contar_o_que_ja_estava_baixado(self):
-        linhas = summary_lines(DownloadSummary(downloaded_count=2, already_downloaded_count=5))
-        assert "==  5 item(s) ja baixado(s) antes, ignorado(s)" in linhas
+class TestPlaylistSummary:
+    def test_should_count_what_was_already_downloaded(self):
+        rows = summary_lines(DownloadSummary(downloaded_count=2, already_downloaded_count=5))
+        assert "==  5 item(s) ja baixado(s) antes, ignorado(s)" in rows
 
-    def test_nao_deve_falar_de_historico_quando_nada_estava_baixado(self):
-        linhas = summary_lines(DownloadSummary(downloaded_count=2))
-        assert not any("ja baixado" in linha for linha in linhas)
+    def test_should_not_mention_history_when_nothing_was_downloaded_before(self):
+        rows = summary_lines(DownloadSummary(downloaded_count=2))
+        assert not any("ja baixado" in row for row in rows)

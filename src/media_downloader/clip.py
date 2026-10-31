@@ -1,14 +1,14 @@
-"""Trecho de um video: leitura do tempo digitado, validacao e nome do arquivo.
+"""A section of a video: parsing the typed time, validation, and the file name.
 
-Puro de proposito — nem yt-dlp nem widget — para a tela validar enquanto a
-pessoa digita e o backend montar as opcoes com a mesma regra.
+Pure on purpose — neither yt-dlp nor widgets — so the screen validates while the
+user types and the backend builds the options with the same rule.
 """
 
 import re
 from urllib.parse import parse_qs, urlparse
 
-# Ate aqui o corte reencoda para cair no quadro exato. Acima disso seria
-# reencodar um filme, e o cancelamento nao alcanca o FFmpeg no meio.
+# Up to this length the cut re-encodes to land on the exact frame. Beyond it, that
+# would mean re-encoding a film, and cancellation cannot reach FFmpeg midway.
 PRECISE_CUT_SECONDS = 180
 
 _NUMBER = re.compile(r"^\d+(?:[.,]\d+)?$")
@@ -17,7 +17,7 @@ _YOUTUBE_T = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$")
 
 
 def parse_time(text: str) -> float | None:
-    """'90', '1:30', '1:02:03', '90,5' em segundos; vazio e sem limite."""
+    """'90', '1:30', '1:02:03', '90,5' in seconds; empty means no limit."""
     text = text.strip()
     if not text:
         return None
@@ -62,7 +62,7 @@ def clip_error(start: float | None, end: float | None, duration: float | None) -
 
 
 def youtube_start_hint(url: str) -> float | None:
-    """O `t=` de um link compartilhado: '90', '90s', '1m30s', '1h2m3s'."""
+    """The `t=` of a shared link: '90', '90s', '1m30s', '1h2m3s'."""
     try:
         value = parse_qs(urlparse(url).query).get("t", [""])[0]
     except ValueError:
@@ -83,7 +83,7 @@ def _label_time(seconds: float) -> str:
 
 
 def clip_label(start: float | None, end: float | None) -> str:
-    """Vai no nome do arquivo: sem ':' (Windows) e sem '%' (template do yt-dlp)."""
+    """Goes into the file name: no ':' (Windows) and no '%' (yt-dlp template)."""
     stop = "fim" if end is None else _label_time(end)
     return f"trecho {_label_time(start or 0)}-{stop}"
 

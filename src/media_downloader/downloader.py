@@ -1,4 +1,4 @@
-"""Backend do download. Publica eventos na fila; nunca toca na interface."""
+"""Download backend. Publishes events to the queue; never touches the interface."""
 
 import queue
 import re
@@ -39,18 +39,18 @@ from .preview import fetch_thumbnail, preview_from_info, thumbnail_url
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
-# Quantas falhas o resumo lista antes de virar contagem. `messagebox` nao rola:
-# lista longa cresce a caixa ate passar da tela e esconder o proprio botao.
+# How many failures the summary lists before switching to a count. `messagebox` does
+# not scroll: a long list grows the box past the screen and hides its own button.
 FAILURES_SHOWN = 5
 
 
 def summary_lines(summary: DownloadSummary) -> list[str]:
-    """Monta o texto do resumo final.
+    """Builds the final summary text.
 
-    O resumo responde "o que aconteceu?"; a revisao que abre logo depois
-    responde "o que corrigir?", item a item e com previa da capa. Repetir o
-    detalhe de cada pendencia aqui so fazia a caixa crescer sem informar nada
-    novo — numa playlist de sete faixas ela ja ocupava a tela inteira.
+    The summary answers "what happened?"; the review that opens right after
+    answers "what should be fixed?", item by item with a cover preview. Repeating
+    each pending item's detail here only made the box grow without saying anything
+    new — for a seven-track playlist it already filled the whole screen.
     """
     failed = len(summary.failed_items)
     pending = len(summary.metadata_pending_items)
@@ -72,7 +72,7 @@ def summary_lines(summary: DownloadSummary) -> list[str]:
             lines.append(f"  ... e mais {failed - FAILURES_SHOWN}")
     if summary.extractor_notices and (failed or not summary.downloaded_count):
         lines += ["", "Avisos do extrator:"]
-        lines += [f"  - {aviso}" for aviso in summary.extractor_notices[:FAILURES_SHOWN]]
+        lines += [f"  - {notice}" for notice in summary.extractor_notices[:FAILURES_SHOWN]]
     if pending:
         lines += ["", f"A revisao abre em seguida, com {pending} item(s) para confirmar."]
     return lines
@@ -80,7 +80,7 @@ def summary_lines(summary: DownloadSummary) -> list[str]:
 
 
 def folder_summary_lines(summary: DownloadSummary) -> list[str]:
-    """Resumo da correcao de uma pasta — nada foi baixado, entao nao fala em download."""
+    """Summary of a folder fix — nothing was downloaded, so it does not mention downloads."""
     failed = len(summary.failed_items)
     lines = [
         f"{summary.total_items} MP3 lido(s) na pasta",
@@ -95,11 +95,11 @@ def folder_summary_lines(summary: DownloadSummary) -> list[str]:
             lines.append(f"  ... e mais {failed - FAILURES_SHOWN}")
     return lines
 
-# Um por pasta de destino: o MP3 de um video nao pode impedir o MP4 dele.
+# One per destination folder: a video's MP3 must not block its MP4.
 ARCHIVE_FILENAME = ".historico-de-downloads.txt"
 
-# Desde o yt-dlp 2025.11 o YouTube exige um runtime de JavaScript, e so o deno
-# vem ligado por padrao: com node instalado e sem deno, o yt-dlp nem tentava.
+# Since yt-dlp 2025.11 YouTube requires a JavaScript runtime, and only deno is
+# enabled by default: with node installed and no deno, yt-dlp did not even try.
 _JS_RUNTIME_PREFERENCE = ("deno", "node", "bun")
 
 
@@ -114,8 +114,8 @@ def js_runtimes_for(which: Callable[[str], str | None]) -> dict[str, dict[str, s
 _BEST_VIDEO = "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b"
 VIDEO_QUALITIES = ("best", "1080", "720", "480", "360")
 
-# Patrocinio, autopromocao, pedido de inscricao e o trecho sem musica de um
-# clipe: o que a pessoa pularia na mao.
+# Sponsors, self-promotion, subscribe reminders, and the non-music part of a
+# music video: what the user would skip by hand.
 SPONSOR_CATEGORIES = ("sponsor", "selfpromo", "interaction", "music_offtopic")
 _SUBTITLE_LANGS = ["pt.*", "en.*"]
 _SUBTITLE_EXTS = {"vtt", "srt", "ass", "ssa", "ttml", "srv1", "srv2", "srv3", "json3", "lrc"}
@@ -123,12 +123,12 @@ _MOVE_FILES = MoveFilesAfterDownloadPP.pp_key()
 
 
 def _is_subtitle_download(info_dict: dict[str, Any]) -> bool:
-    """Legenda passa pelo gancho como download a parte, com o dicionario da legenda."""
+    """A subtitle goes through the hook as a separate download, with the subtitle's dict."""
     return not info_dict.get("id") and info_dict.get("ext") in _SUBTITLE_EXTS
 
 
 def video_format(quality: str) -> str:
-    """Altura como teto: sem nada abaixo dela, baixa o que houver em vez de falhar."""
+    """Height as a cap: with nothing below it, download whatever exists instead of failing."""
     if quality not in VIDEO_QUALITIES or quality == "best":
         return _BEST_VIDEO
     cap = f"[height<={quality}]"
@@ -136,7 +136,7 @@ def video_format(quality: str) -> str:
 
 
 def transfer_text(speed: float | None, eta: float | None) -> str:
-    """'4.2 MB/s · faltam 0:12' — so o que o yt-dlp informou."""
+    """'4.2 MB/s · faltam 0:12' — only what yt-dlp reported."""
     if not speed:
         return ""
     if speed >= 1024 * 1024:
@@ -154,7 +154,7 @@ def _retry_sleep(attempt: int) -> float:
 
 
 def _archive_id(entry: dict[str, Any]) -> str | None:
-    """Mesma chave que o yt-dlp grava no historico (`_make_archive_id`)."""
+    """Same key yt-dlp writes to the download archive (`_make_archive_id`)."""
     extractor = entry.get("extractor_key") or entry.get("ie_key")
     video_id = entry.get("id")
     if not (extractor and video_id):
@@ -181,10 +181,10 @@ def forget_archived(path: Path, ids: set[str]) -> None:
 
 
 def playlist_entries(info: dict[str, Any], archived: set[str]) -> list[PlaylistEntry]:
-    """Linhas da escolha, numeradas pela posicao que o `playlist_items` entende.
+    """Selection rows, numbered by the position `playlist_items` understands.
 
-    O `None` que o ignoreerrors deixa no lugar de um item quebrado ainda ocupa a
-    posicao: pular a contagem ali desalinharia todos os indices seguintes.
+    The `None` that ignoreerrors leaves in place of a broken item still takes up
+    its position: skipping the count there would misalign every following index.
     """
     rows = []
     for index, entry in enumerate(info.get("entries") or [], start=1):
@@ -207,7 +207,7 @@ def playlist_items_spec(indices: list[int]) -> str:
 
 @dataclass(frozen=True)
 class _PlaylistListing:
-    """Playlist listada que espera a escolha da pessoa para comecar."""
+    """A listed playlist waiting for the user's selection to start."""
     url: str
     file_format: str
     include_metadata: bool
@@ -218,7 +218,7 @@ class _PlaylistListing:
 
 
 def _source_artist(info: dict[str, Any]) -> str | None:
-    """Artista que a origem publicou — nunca o canal, que e provisorio."""
+    """The artist the source published — never the channel, which is provisional."""
     if info.get("artist"):
         return info["artist"]
     artists = info.get("artists") or []
@@ -226,7 +226,7 @@ def _source_artist(info: dict[str, Any]) -> str | None:
 
 
 class _SilentLogger:
-    """A previa nao relata nada: o download, se vier, relata por ela."""
+    """The preview reports nothing: the download, if it happens, reports for it."""
 
     def debug(self, _: str) -> None:
         pass
@@ -243,18 +243,18 @@ class ReportingLogger:
         pass
 
     def warning(self, msg: str) -> None:
-        # Aviso do extrator não é item que falhou: o alerta de runtime
-        # JavaScript ausente aparece em download que conclui inteiro.
+        # An extractor notice is not a failed item: the missing JavaScript
+        # runtime warning shows up in downloads that complete fully.
         self._capture(msg, failure=False)
 
     def error(self, msg: str) -> None:
         self._capture(msg, failure=True)
 
     def _capture(self, msg: str, *, failure: bool) -> None:
-        # A saída do yt-dlp vem colorida: sem tirar o escape ANSI, o prefixo não
-        # casa e o resumo mostra "\x1b[0;31mERROR:\x1b[0m ..." como texto.
-        # Prefixo sem o espaço: o .strip() anterior já removeu o espaço de
-        # "ERROR: " quando a mensagem vinha vazia, e "ERROR:" virava um item.
+        # yt-dlp output is coloured: without stripping the ANSI escape, the prefix does
+        # not match and the summary shows "\x1b[0;31mERROR:\x1b[0m ..." as text.
+        # Prefix without the space: the earlier .strip() already removed the space in
+        # "ERROR: " when the message was empty, and "ERROR:" became an item.
         cleaned = _ANSI_ESCAPE.sub("", msg).strip()
         for prefix in ("ERROR:", "WARNING:"):
             cleaned = cleaned.removeprefix(prefix).strip()
@@ -278,17 +278,17 @@ class DownloadManager:
         self._q = event_queue
         self._metadata_service = metadata_service or MusicMetadataService()
         self._cancel = threading.Event()
-        # Separado do cancelamento do download: parar o lote na revisao nao
-        # pode interromper um download que esteja rodando ao mesmo tempo.
+        # Separate from download cancellation: stopping the batch in review must
+        # not interrupt a download running at the same time.
         self._stop_bulk = threading.Event()
-        # None mantem DOWNLOAD_FOLDERS como esta (Downloads/ do repositorio).
+        # None keeps DOWNLOAD_FOLDERS as is (the repository's Downloads/).
         self._downloads_dir: Path | None = None
         self._listing: _PlaylistListing | None = None
         self._finished_files: list[tuple[str, Path]] = []
         self._history_path: Path | None = None
 
     def cancel(self) -> None:
-        """Pede a interrupcao; o yt-dlp para no proximo aviso de progresso."""
+        """Requests interruption; yt-dlp stops at the next progress update."""
         self._cancel.set()
 
     def _reset_cancel(self) -> None:
@@ -307,14 +307,14 @@ class DownloadManager:
     def _apply_candidate(
         self, pending_item: MetadataPendingItem, candidate: MusicMetadataCandidate,
     ) -> bool:
-        """Grava as tags e da ao arquivo o nome oficial da faixa."""
+        """Writes the tags and gives the file the track's official name."""
         path = Path(pending_item.file_path)
         cover_embedded = self._metadata_service.apply_to_mp3(path, candidate)
         try:
             rename_to_song(path, candidate.title)
         except OSError:
-            # As tags ja estao gravadas, que e o que a pessoa confirmou; o nome
-            # antigo e so menos bonito, nao um arquivo errado.
+            # The tags are already written, which is what the user confirmed; the old
+            # name is just less pretty, not a wrong file.
             pass
         return cover_embedded
 
@@ -353,11 +353,11 @@ class DownloadManager:
             self._emit("metadata_cover_unavailable", candidate=candidate)
 
     def set_history_path(self, path: Path) -> None:
-        """Sem chamar isto, nada vai para o historico — testes nao sujam a configuracao."""
+        """Without calling this, nothing goes into the history — tests do not pollute the config."""
         self._history_path = path
 
     def probe(self, url: str) -> None:
-        """Previa do link. Falha aqui nao e erro de download: so nao ha previa."""
+        """Link preview. A failure here is not a download error: there is just no preview."""
         try:
             playlist_mode = self._url_is_playlist(url)
             opts = {
@@ -385,14 +385,14 @@ class DownloadManager:
         self._emit("preview", url=url, preview=replace(preview, thumbnail=thumbnail))
 
     def set_downloads_dir(self, base: Path) -> None:
-        """Base escolhida pela pessoa; as subpastas por tipo continuam as mesmas."""
+        """Base folder chosen by the user; the per-type subfolders stay the same."""
         self._downloads_dir = base
 
     def stop_bulk(self) -> None:
         self._stop_bulk.set()
 
     def apply_suggested(self, pending_items: list[MetadataPendingItem]) -> None:
-        """Aplica a sugestao do app em cada item; o que nao tem sugestao fica na revisao."""
+        """Applies the app's suggestion to each item; items without one stay in review."""
         self._stop_bulk.clear()
         applied = failed = 0
         for position, item in enumerate(pending_items, start=1):
@@ -406,9 +406,9 @@ class DownloadManager:
                     continue
                 self._apply_candidate(item, candidate)
             except Exception:
-                # Catalogo fora do ar ou arquivo travado num item: ele so continua
-                # na revisao, e o lote segue — mas contado a parte, porque "sem
-                # sugestao" e "nao consultado" pedem respostas diferentes.
+                # Catalog down or a locked file for one item: it just stays in
+                # review and the batch continues — but counted separately, because
+                # "no suggestion" and "not queried" call for different responses.
                 failed += 1
                 continue
             applied += 1
@@ -418,7 +418,7 @@ class DownloadManager:
             failed=failed)
 
     def crop_covers(self, pending_items: list[MetadataPendingItem]) -> None:
-        """Recorta para quadrada a miniatura gravada — so por escolha da pessoa."""
+        """Crops the embedded thumbnail to a square — only at the user's request."""
         cropped = failed = 0
         for item in pending_items:
             try:
@@ -433,7 +433,7 @@ class DownloadManager:
     def fix_folder(
         self, folder: str, auto_metadata: bool, artist_hint: str | None = None,
     ) -> None:
-        """Leva MP3 que ja estao no disco para a mesma correspondencia e revisao do download."""
+        """Puts MP3 files already on disk through the same matching and review as downloads."""
         self._reset_cancel()
         try:
             summary = DownloadSummary(target_dir=folder)
@@ -445,7 +445,7 @@ class DownloadManager:
                 except Exception:
                     summary.failed_items.append(path.name)
                     continue
-                # Sem motivo nenhum e arquivo completo: a pessoa pediu que nao se toque.
+                # No reason at all means a complete file: the user asked for it to be left alone.
                 if item.review_reasons:
                     summary.metadata_pending_items.append(item)
                 else:
@@ -453,7 +453,7 @@ class DownloadManager:
             summary.total_items = len(paths)
             if auto_metadata:
                 self._auto_apply_metadata(summary)
-            # O que tem algo faltando vem antes do que so precisa ser conferido.
+            # Items missing something come before those that only need checking.
             summary.metadata_pending_items.sort(key=lambda item: not item.review_reasons)
             self._emit("folder_checked", summary=summary)
         except Exception as exc:
@@ -464,7 +464,7 @@ class DownloadManager:
         include_metadata: bool = False, auto_metadata: bool = False,
         options: MediaOptions | None = None,
     ) -> None:
-        """Item unico baixa direto; playlist lista e espera `download_selected`."""
+        """A single item downloads directly; a playlist is listed and waits for `download_selected`."""
         options = options or MediaOptions()
         self._reset_cancel()
         self._listing = None
@@ -475,15 +475,15 @@ class DownloadManager:
             if playlist_mode and not self._is_playlist_result(info):
                 playlist_mode = False
             if self._cancel.is_set():
-                # Listagem de playlist grande demora; quem cancelou nela nao
-                # espera ver o dialogo de escolha abrir em seguida.
+                # Listing a large playlist takes a while; whoever cancelled during it
+                # does not expect the selection dialog to open right after.
                 self._emit("cancelled", summary=DownloadSummary(playlist_mode=playlist_mode))
                 return
 
             target_dir = self._ensure_output_dir(file_format, playlist_mode)
             if playlist_mode:
                 entries = playlist_entries(info, archive_ids(target_dir / ARCHIVE_FILENAME))
-                # Trecho nao vale em playlist: cada item tem duracao propria.
+                # A section does not apply to playlists: each item has its own duration.
                 self._listing = _PlaylistListing(
                     url, file_format, include_metadata, auto_metadata,
                     target_dir, tuple(entries),
@@ -513,8 +513,8 @@ class DownloadManager:
         self._reset_cancel()
 
         selected = [entry for entry in listing.entries if entry.index in chosen]
-        # Pedir de novo o que ja foi baixado e intencional: sem esquecer, o
-        # historico faria o yt-dlp pular o item em silencio.
+        # Requesting something already downloaded again is intentional: without
+        # forgetting it, the archive would make yt-dlp skip the item silently.
         try:
             forget_archived(
                 listing.target_dir / ARCHIVE_FILENAME,
@@ -587,9 +587,9 @@ class DownloadManager:
             self._emit("error", message=str(exc))
 
     def _record_final_file(self, data: dict[str, Any]) -> None:
-        """Guarda onde cada arquivo terminou, depois de convertido e movido."""
-        # O nome publicado e o `pp_key()` ("MoveFiles"), nao o da classe: comparado
-        # com "MoveFilesAfterDownload", nenhum arquivo era registrado.
+        """Records where each file ended up, after conversion and moving."""
+        # The published name is the `pp_key()` ("MoveFiles"), not the class name: compared
+        # with "MoveFilesAfterDownload", no file was ever recorded.
         if data.get("status") != "finished" or data.get("postprocessor") != _MOVE_FILES:
             return
         info = data.get("info_dict") or {}
@@ -602,10 +602,10 @@ class DownloadManager:
         self, summary: DownloadSummary, files: list[tuple[str, Path]],
         clip: str | None = None,
     ) -> list[tuple[str, Path]]:
-        """Da a cada MP3 o nome da musica e leva as pendencias junto.
+        """Gives each MP3 the song name and carries the pending items along.
 
-        O trecho mantem o sufixo: com so o nome da musica, ele tomaria o lugar
-        do MP3 inteiro da mesma faixa.
+        A section keeps its suffix: with only the song name, it would replace
+        the full MP3 of the same track.
         """
         moved: dict[str, str] = {}
         renamed = []
@@ -634,11 +634,11 @@ class DownloadManager:
                 for title, path in self._finished_files
             ])
         except OSError:
-            # Historico e conveniencia: o arquivo ja esta na pasta.
+            # History is a convenience: the file is already in the folder.
             pass
 
     def _auto_apply_metadata(self, summary: DownloadSummary) -> None:
-        """Aplica o candidato seguro de cada pendencia; o resto segue para a revisao."""
+        """Applies the confident candidate for each pending item; the rest go to review."""
         pending = summary.metadata_pending_items
         remaining: list[MetadataPendingItem] = []
         for position, item in enumerate(pending, start=1):
@@ -654,8 +654,8 @@ class DownloadManager:
                 if candidate is not None:
                     self._apply_candidate(item, candidate)
             except Exception:
-                # Catalogo fora do ar em um item nao e falha de download: o item
-                # so continua pendente, como estaria sem a aplicacao automatica.
+                # The catalog being down for one item is not a download failure: the
+                # item just stays pending, as it would without automatic application.
                 candidate = None
             if candidate is None:
                 remaining.append(item)
@@ -673,7 +673,7 @@ class DownloadManager:
 
     @staticmethod
     def _base_opts() -> dict[str, Any]:
-        """O que a listagem e o download precisam igual para falar com o YouTube."""
+        """What listing and downloading both need to talk to YouTube."""
         return {
             "quiet": True,
             "ignoreerrors": True,
@@ -709,8 +709,8 @@ class DownloadManager:
         if playlist_mode:
             outtmpl = str(target_dir / "%(playlist_title,playlist|Playlist)s" / "%(title)s.%(ext)s")
         elif clip:
-            # Nome proprio: com o do arquivo inteiro, o `final_ext` acharia o
-            # MP3 completo e nao baixaria o trecho.
+            # Its own name: with the full file's name, `final_ext` would find the
+            # full MP3 and not download the section.
             label = clip_label(options.clip_start, options.clip_end)
             outtmpl = str(target_dir / f"%(title)s ({label}).%(ext)s")
         else:
@@ -718,8 +718,8 @@ class DownloadManager:
 
         opts: dict[str, Any] = {
             **self._base_opts(),
-            # A capa da propria playlist nao e de nenhuma faixa: gravada, sobrava
-            # solta na pasta como "000 - Nome da playlist.jpg".
+            # The playlist's own cover belongs to no track: written, it was left
+            # loose in the folder as "000 - Nome da playlist.jpg".
             "outtmpl": {"default": outtmpl, "pl_thumbnail": ""},
             "noplaylist": not playlist_mode,
             "progress_hooks": [self._make_progress_hook(summary, include_metadata)],
@@ -728,14 +728,14 @@ class DownloadManager:
             "no_color": True,
             "concurrent_fragment_downloads": 1,
             "logger": ReportingLogger(self._q, summary),
-            # Sem isto o yt-dlp procura o .webm que a conversao ja apagou e
-            # baixa de novo um MP3 que esta na pasta.
+            # Without this yt-dlp looks for the .webm that conversion already deleted
+            # and downloads again an MP3 that is in the folder.
             "final_ext": file_format,
             "retry_sleep_functions": {"http": _retry_sleep, "fragment": _retry_sleep},
         }
         if playlist_mode:
-            # Playlist grande em rajada e o que leva o YouTube a pedir login
-            # "para confirmar que nao e um robo".
+            # A large playlist in a burst is what makes YouTube ask for a login
+            # "to confirm you're not a bot".
             opts.update({
                 "download_archive": str(target_dir / ARCHIVE_FILENAME),
                 "sleep_interval_requests": 1,
@@ -750,8 +750,8 @@ class DownloadManager:
             if is_precise(options.clip_start, options.clip_end):
                 opts["force_keyframes_at_cuts"] = True
 
-        # Segmentos do SponsorBlock vem na linha do tempo do video inteiro;
-        # aplicados a um trecho, cortariam o lugar errado.
+        # SponsorBlock segments come in the full video's timeline;
+        # applied to a section, they would cut the wrong place.
         sponsors = options.skip_sponsors and not clip
         sponsor_pps = [{
             "key": "SponsorBlock",
@@ -759,8 +759,8 @@ class DownloadManager:
             "api": "https://sponsor.ajay.app",
             "when": "after_filter",
         }] if sponsors else []
-        # Antes de gravar metadados: os capitulos gravados tem de ser os do
-        # arquivo ja sem os segmentos.
+        # Before writing metadata: the chapters written must be those of the
+        # file with the segments already removed.
         remove_pps = [{
             "key": "ModifyChapters",
             "remove_sponsor_segments": list(SPONSOR_CATEGORIES),
@@ -804,7 +804,7 @@ class DownloadManager:
                     "writeautomaticsub": True,
                     "subtitleslangs": list(_SUBTITLE_LANGS),
                 })
-                # False apaga o .vtt depois de embutir: nao sobra solto na pasta.
+                # False deletes the .vtt after embedding: nothing is left loose in the folder.
                 postprocessors.append(
                     {"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False})
             if options.chapters:
@@ -842,8 +842,8 @@ class DownloadManager:
                 else:
                     overall = item_pct
 
-                # Contagem do que foi escolhido, nao a posicao na playlist: com
-                # parte dela escolhida, "30/2" nao diz quanto falta.
+                # A count of what was chosen, not the playlist position: with only
+                # part of it chosen, "30/2" does not say how much is left.
                 current = min(summary.downloaded_count + 1, summary.total_items)
                 suffix = f" ({current}/{summary.total_items})" if summary.total_items > 1 else ""
                 self._emit("progress", progress=max(0.0, min(overall, 100.0)),
@@ -887,7 +887,7 @@ class DownloadManager:
 
     @staticmethod
     def _reconcile_failure_reports(summary: DownloadSummary) -> None:
-        """Remove diagnósticos do extrator quando o resultado final foi íntegro."""
+        """Removes extractor diagnostics when the final result was complete."""
         if summary.total_items and summary.downloaded_count >= summary.total_items:
             summary.failed_items.clear()
             summary.extractor_notices.clear()

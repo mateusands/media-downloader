@@ -37,9 +37,9 @@ for arg in "${@:-}"; do
     esac
 done
 
-# ── Atalho no menu de aplicativos ────────────────────────────────────────────
-# O .desktop e gerado aqui, e nao versionado, porque Exec e Icon exigem caminho
-# absoluto e ele muda de maquina para maquina.
+# ── Application menu shortcut ────────────────────────────────────────────────
+# The .desktop file is generated here, not versioned, because Exec and Icon need
+# an absolute path, and that changes from machine to machine.
 if [[ -n "$acao_atalho" ]]; then
     destino="${XDG_DATA_HOME:-$HOME/.local/share}/applications/mediadownloader.desktop"
     if [[ "$acao_atalho" == remover ]]; then
@@ -65,10 +65,10 @@ DESKTOP
     exit 0
 fi
 
-# ── Ambiente virtual ─────────────────────────────────────────────────────────
-# O venv traz o proprio pip, o que resolve de uma vez os dois tropecos das
-# distribuicoes recentes: pip ausente no Python do sistema e o bloqueio do
-# PEP 668 (`externally-managed-environment`).
+# ── Virtual environment ──────────────────────────────────────────────────────
+# The venv brings its own pip, which solves at once the two stumbling blocks of
+# recent distributions: no pip in the system Python, and the PEP 668 block
+# (`externally-managed-environment`).
 instalar=0
 if [[ ! -x "$PY" ]]; then
     command -v python3 >/dev/null || { erro "python3 nao encontrado no PATH."; exit 1; }
@@ -77,8 +77,8 @@ if [[ ! -x "$PY" ]]; then
     instalar=1
 fi
 
-# yt_dlp_ejs entra na checagem porque venvs antigos tem o yt-dlp sem o extra
-# [default], e sem ele o YouTube nao resolve a assinatura dos formatos.
+# yt_dlp_ejs is part of the check because old venvs have yt-dlp without the
+# [default] extra, and without it YouTube format signatures cannot be resolved.
 if ! "$PY" -c 'import PySide6.QtWidgets, PySide6.QtSvg, yt_dlp, yt_dlp_ejs, mutagen, PIL' 2>/dev/null; then
     instalar=1
 fi
@@ -90,23 +90,23 @@ if (( instalar )); then
 fi
 
 if (( atualizar )); then
-    # Erro de extracao e, primeiro de tudo, suspeita de yt-dlp velho: as
-    # plataformas mudam e a versao instalada para de funcionar sozinha.
+    # An extraction error is, first of all, a sign of an outdated yt-dlp: the
+    # platforms change and the installed version stops working on its own.
     passo "Atualizando o yt-dlp ..."
     "$PY" -m pip install --quiet --upgrade yt-dlp
 fi
 
-# ── Requisitos de sistema ────────────────────────────────────────────────────
-# O Qt vem dentro da roda do PySide6, mas no X11 o plugin xcb precisa da
-# libxcb-cursor do sistema; sem ela a janela nao abre e o erro fala em "xcb".
+# ── System requirements ──────────────────────────────────────────────────────
+# Qt ships inside the PySide6 wheel, but on X11 the xcb plugin needs the
+# system's libxcb-cursor; without it the window does not open and the error mentions "xcb".
 if [[ "${XDG_SESSION_TYPE:-}" != wayland ]] && ! ldconfig -p 2>/dev/null | grep -q libxcb-cursor; then
     aviso "AVISO: libxcb-cursor nao encontrada — no X11 a janela pode nao abrir."
     aviso "       Arch/CachyOS : sudo pacman -S xcb-util-cursor"
     aviso "       Debian/Ubuntu: sudo apt install libxcb-cursor0"
 fi
 
-# FFmpeg e aviso, nao bloqueio: a janela abre e a falha so aparece na conversao,
-# com uma mensagem do yt-dlp que nao diz "instale o ffmpeg".
+# FFmpeg is a warning, not a blocker: the window opens and the failure only shows up
+# during conversion, with a yt-dlp message that does not say "install ffmpeg".
 if ! command -v ffmpeg >/dev/null; then
     aviso "AVISO: FFmpeg nao esta no PATH."
     aviso "       O download vai parecer progredir e falhar na conversao para MP3/MP4."

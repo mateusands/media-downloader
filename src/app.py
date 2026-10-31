@@ -1,4 +1,4 @@
-"""Ponto de entrada do Media Downloader."""
+"""Media Downloader entry point."""
 
 import sys
 
@@ -14,7 +14,7 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_TITLE)
     app.setDesktopFileName("mediadownloader")
-    # Fusion desenha igual em todo sistema; o estilo nativo ignora parte do QSS.
+    # Fusion draws the same on every system; the native style ignores part of the QSS.
     app.setStyle("Fusion")
     font = QFont()
     font.setFamilies(FONT_FAMILIES)

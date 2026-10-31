@@ -16,7 +16,7 @@ introduces a value the theme does not have. A token change and its line here cha
 ## Colours
 
 Depth comes from luminance, not shadow: every stacked surface is one step lighter than the one below
-(`test_contraste.py` enforces the ladder).
+(`test_contrast.py` enforces the ladder).
 
 | Role | Token | Value |
 |---|---|---|
@@ -40,7 +40,7 @@ Depth comes from luminance, not shadow: every stacked surface is one step lighte
 | Success / error | `CLR_GREEN` / `CLR_ERROR` | `#3dd68c` / `#ff7085` |
 | Danger button border / hover | `CLR_DANGER_BORDER` / `CLR_DANGER_BG` | `#5a2a35` / `#2a1218` |
 
-**Measured contrast** (all in `test_contraste.py`; text ≥ 4.5:1, state indicators ≥ 3:1):
+**Measured contrast** (all in `test_contrast.py`; text ≥ 4.5:1, state indicators ≥ 3:1):
 
 | Pair | Ratio |
 |---|---|
@@ -106,8 +106,8 @@ height), 16 (cards). Inner radius ≤ outer radius.
 
 ## Do and don't
 
-- Do take every colour from `theme.py`; `test_contraste.py` fails on a hex literal in a UI module.
-- Do measure a new colour pair before using it, and add it to `test_contraste.py`.
+- Do take every colour from `theme.py`; `test_contrast.py` fails on a hex literal in a UI module.
+- Do measure a new colour pair before using it, and add it to `test_contrast.py`.
 - Do give focus by Tab, not by click (`keyboard_focus`), and paint a visible ring on custom widgets.
 - Do explain a disabled control (tooltip or subtitle) instead of just greying it out.
 - Don't use the gradient anywhere except the primary action and the progress fill.

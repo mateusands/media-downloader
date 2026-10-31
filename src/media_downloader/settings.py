@@ -1,4 +1,4 @@
-"""Preferencias que sobrevivem entre execucoes — nao conhece widget nem fila."""
+"""Preferences that survive between runs — knows nothing about widgets or the queue."""
 
 import json
 import os
@@ -19,7 +19,7 @@ class Settings:
 
 
 def load_settings(path: Path = SETTINGS_PATH) -> Settings:
-    # Preferencia ilegivel nao pode impedir o app de abrir: volta ao padrao.
+    # An unreadable preference must not stop the app from opening: fall back to the default.
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         downloads_dir = data["downloads_dir"]

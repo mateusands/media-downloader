@@ -1,9 +1,9 @@
-"""Escolha dos itens da playlist antes de baixar.
+"""Choosing playlist items before downloading.
 
-`PlaylistChoice` e o estado — o que esta marcado — e nao conhece widget, para
-ser testado sem abrir janela. `PlaylistSelection` e o dialogo que o desenha.
-Como a revisao, vive fora de `window.py`: a janela principal so recebe de volta
-os indices escolhidos ou o aviso de que a pessoa desistiu.
+`PlaylistChoice` is the state — what is checked — and knows nothing about widgets,
+so it can be tested without opening a window. `PlaylistSelection` is the dialog
+that draws it. Like the review, it lives outside `window.py`: the main window only
+gets back the chosen indices or the notice that the user backed out.
 """
 
 from typing import Callable
@@ -62,7 +62,7 @@ class PlaylistChoice:
 
 
 class PlaylistSelection:
-    """Dialogo da escolha. Chama exatamente um dos dois retornos ao fechar."""
+    """The selection dialog. Calls exactly one of the two callbacks when closing."""
 
     def __init__(
         self, parent: QWidget,
@@ -79,7 +79,7 @@ class PlaylistSelection:
         dialog.setWindowTitle("Escolher itens da playlist")
         dialog.resize(720, 600)
         dialog.setMinimumSize(560, 420)
-        # Fechar pelo X da janela e desistir, como "Cancelar".
+        # Closing with the window's X means backing out, like "Cancelar".
         dialog.rejected.connect(self._rejected)
         self._dialog = dialog
 

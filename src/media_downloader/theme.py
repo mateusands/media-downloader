@@ -1,38 +1,38 @@
-"""Paleta, tipografia e a folha de estilo (QSS) da interface.
+"""The interface's palette, typography, and stylesheet (QSS).
 
-No escuro a profundidade vem da luminancia, nao de sombra: cada superficie
-empilhada e um degrau mais clara que a de baixo (ver test_contraste.py).
+In the dark, depth comes from luminance, not shadow: each stacked surface
+is one step lighter than the one below it (see test_contrast.py).
 """
 
-BG_DARK       = "#09090e"   # fundo da janela
+BG_DARK       = "#09090e"   # window background
 BG_SIDEBAR    = "#0d0d14"
 BG_CARD       = "#12121a"
 BG_INPUT      = "#1a1a24"
 BG_HOVER      = "#23232f"
 CLR_BORDER    = "#2b2b3a"
 CLR_TEXT      = "#f4f4f8"
-CLR_MUTED     = "#9b9bb0"   # 5.6:1 sobre BG_HOVER, a superficie mais clara em que aparece
+CLR_MUTED     = "#9b9bb0"   # 5.6:1 on BG_HOVER, the lightest surface it appears on
 CLR_ACCENT    = "#6d4aff"
-CLR_ACCENT_END = "#9333ea"  # fim do degrade do botao principal; o #9b3cf0 ficava em 4.45
+CLR_ACCENT_END = "#9333ea"  # end of the primary button gradient; #9b3cf0 measured 4.45
 CLR_ACCENT_HOVER_END = "#8429d9"
 CLR_ACCENT_DARK = "#5a38e8"
 CLR_ACCENT_LIGHT = "#b3a1ff"
-CLR_ACCENT_SOFT = "#1e1838"  # fundo do que esta selecionado
-CLR_ACCENT_TILE = "#2a2150"  # quadro do icone do cartao selecionado
+CLR_ACCENT_SOFT = "#1e1838"  # background of what is selected
+CLR_ACCENT_TILE = "#2a2150"  # icon tile of the selected card
 CLR_ACCENT_PRESSED = "#4b2fc4"
-CLR_FOCUS_HALO = "#466d4aff"  # CLR_ACCENT a 27%, em #AARRGGBB do Qt
+CLR_FOCUS_HALO = "#466d4aff"  # CLR_ACCENT at 27%, in Qt's #AARRGGBB
 CLR_ON_ACCENT = "#ffffff"
-CLR_ON_LIGHT  = "#111118"   # texto sobre o chip marcado, que e claro
+CLR_ON_LIGHT  = "#111118"   # text on the checked chip, which is light
 CLR_BORDER_HOVER = "#3d3d52"
-# Indicador de estado e grafico: 3:1 contra a superficie (WCAG 1.4.11).
-# O trilho desligado era #34344a, 1.54:1 — "desligado" mal aparecia.
+# State indicators and graphics: 3:1 against the surface (WCAG 1.4.11).
+# The off track was #34344a, 1.54:1 — "off" was barely visible.
 CLR_SWITCH_OFF = "#686884"
 CLR_CONTROL_BORDER = "#686884"
-CLR_DISABLED  = "#4a4a5c"   # isento de contraste, mas legivel como "apagado"
+CLR_DISABLED  = "#4a4a5c"   # exempt from contrast, but legible as "dimmed"
 CLR_DANGER_BORDER = "#5a2a35"
 CLR_DANGER_BG = "#2a1218"
 CLR_GREEN     = "#3dd68c"
-MOTION_FAST_MS = 140        # chave, hover — tela densa: ate 200 ms
+MOTION_FAST_MS = 140        # switch, hover — dense screen: up to 200 ms
 CLR_ERROR     = "#ff7085"
 FONT_FAMILIES = ["Inter", "Segoe UI", "SF Pro Text", "Cantarell", "Noto Sans", "sans-serif"]
 
@@ -50,7 +50,7 @@ def stylesheet() -> str:
         border: 1px solid {CLR_BORDER}; border-radius: 6px; padding: 6px 8px;
     }}
 
-    /* ── Barra lateral ─────────────────────────────── */
+    /* ── Sidebar ───────────────────────────────────── */
     #sidebar {{ background: {BG_SIDEBAR}; border-right: 1px solid {CLR_BORDER}; }}
     #brand {{ font-size: 15px; font-weight: 700; }}
     #brandSub {{ color: {CLR_MUTED}; font-size: 11px; }}
@@ -59,7 +59,7 @@ def stylesheet() -> str:
         background: transparent; border: none; color: {CLR_MUTED}; font-weight: 600;
     }}
     #navButton:hover {{ background: {BG_INPUT}; color: {CLR_TEXT}; }}
-    /* Ativo por mais que cor: a barra a esquerda e forma, nao so tom. */
+    /* Active by more than colour: the bar on the left is shape, not just tone. */
     #navButton:checked {{
         background: {CLR_ACCENT_SOFT}; color: {CLR_TEXT};
         border-left: 3px solid {CLR_ACCENT}; padding-left: 9px;
@@ -71,7 +71,7 @@ def stylesheet() -> str:
     }}
     #destPath {{ color: {CLR_TEXT}; font-size: 12px; }}
 
-    /* ── Tipografia ────────────────────────────────── */
+    /* ── Typography ────────────────────────────────── */
     #h1 {{ font-size: 26px; font-weight: 800; letter-spacing: -0.4px; }}
     #h2 {{ font-size: 14px; font-weight: 700; }}
     #muted {{ color: {CLR_MUTED}; }}
@@ -79,7 +79,7 @@ def stylesheet() -> str:
     #error {{ color: {CLR_ERROR}; font-size: 12px; }}
     #link {{ color: {CLR_ACCENT_LIGHT}; font-size: 12px; }}
 
-    /* ── Cartoes e secoes ──────────────────────────── */
+    /* ── Cards and sections ────────────────────────── */
     #card {{
         background: {BG_CARD}; border: 1px solid {CLR_BORDER}; border-radius: 16px;
     }}
@@ -100,7 +100,7 @@ def stylesheet() -> str:
     #formatCard[selected="true"] {{
         background: {CLR_ACCENT_SOFT}; border-color: {CLR_ACCENT};
     }}
-    /* Foco so pelo teclado (TabFocus): o clique do mouse nao deixa anel. */
+    /* Focus only from the keyboard (TabFocus): a mouse click leaves no ring. */
     #formatCard:focus {{ border-color: {CLR_ACCENT_LIGHT}; }}
     #formatTitle {{ font-size: 14px; font-weight: 700; }}
 
@@ -122,7 +122,7 @@ def stylesheet() -> str:
     #optionRow:hover {{ background: {BG_INPUT}; }}
     #optionTitle {{ font-weight: 600; }}
 
-    /* ── Botoes ────────────────────────────────────── */
+    /* ── Buttons ───────────────────────────────────── */
     QPushButton {{
         background: {BG_INPUT}; border: 1px solid {CLR_BORDER}; border-radius: 10px;
         padding: 8px 14px; font-weight: 600;
@@ -137,16 +137,16 @@ def stylesheet() -> str:
         border: none; border-radius: 12px; padding: 12px 26px;
         font-size: 14px; font-weight: 700; color: {CLR_ON_ACCENT};
     }}
-    /* Hover escurece em vez de clarear: os tons claros do violeta
-       reprovam o contraste com o texto branco. */
+    /* Hover darkens instead of lightening: the light violet tones
+       fail contrast against white text. */
     #primary:hover {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                                     stop:0 {CLR_ACCENT_DARK}, stop:1 {CLR_ACCENT_HOVER_END});
     }}
     #primary:focus {{ border: 2px solid {CLR_ACCENT_LIGHT}; }}
     #primary:pressed {{ background: {CLR_ACCENT_PRESSED}; }}
-    /* Desabilitado apaga o preenchimento, nao so a letra: o degrade com
-       letra apagada continuava com cara de clicavel. */
+    /* Disabled removes the fill, not just the text colour: the gradient with
+       dimmed text still looked clickable. */
     #primary:disabled {{ background: {BG_HOVER}; color: {CLR_MUTED}; }}
 
     #ghost {{ background: transparent; border: 1px solid {CLR_BORDER}; }}
@@ -167,7 +167,7 @@ def stylesheet() -> str:
 
     #pasteButton {{ padding: 7px 14px; border-radius: 9px; }}
 
-    /* ── Campos de tempo ───────────────────────────── */
+    /* ── Time fields ───────────────────────────────── */
     #timeInput {{
         background: {BG_INPUT}; border: 1.5px solid {CLR_BORDER}; border-radius: 10px;
         padding: 8px 10px; font-size: 14px; font-weight: 600;
@@ -176,7 +176,7 @@ def stylesheet() -> str:
     #timeInput:focus {{ border-color: {CLR_ACCENT}; }}
     #timeInput[invalid="true"] {{ border-color: {CLR_ERROR}; }}
 
-    /* ── Barra de acao e progresso ─────────────────── */
+    /* ── Action bar and progress ───────────────────── */
     #actionBar {{ background: {BG_SIDEBAR}; border-top: 1px solid {CLR_BORDER}; }}
     #status {{ font-weight: 600; }}
     #status[tone="ok"] {{ color: {CLR_GREEN}; }}
@@ -193,7 +193,7 @@ def stylesheet() -> str:
     }}
     QProgressBar[tone="ok"]::chunk {{ background: {CLR_GREEN}; }}
 
-    /* ── Listas e rolagem ──────────────────────────── */
+    /* ── Lists and scrolling ───────────────────────── */
     QScrollArea {{ background: transparent; border: none; }}
     QScrollArea > QWidget > QWidget {{ background: transparent; }}
     QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

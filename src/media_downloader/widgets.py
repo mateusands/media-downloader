@@ -1,4 +1,4 @@
-"""Widgets reutilizaveis da interface (Qt)."""
+"""Reusable interface widgets (Qt)."""
 
 from PySide6.QtCore import (
     Property,
@@ -41,7 +41,7 @@ from .theme import (
 
 
 def repolish(widget: QWidget) -> None:
-    """Propriedade dinamica so muda o estilo depois de repolir."""
+    """A dynamic property only changes the style after repolishing."""
     style = widget.style()
     style.unpolish(widget)
     style.polish(widget)
@@ -55,7 +55,7 @@ def set_prop(widget: QWidget, name: str, value) -> None:
 
 
 def tabular(widget: QWidget) -> QWidget:
-    """Algarismos de largura fixa: porcentagem e tempo nao pulam ao mudar."""
+    """Fixed-width digits: percentage and time do not jump when they change."""
     font = widget.font()
     font.setFeature(QFont.Tag("tnum"), 1)
     widget.setFont(font)
@@ -63,7 +63,7 @@ def tabular(widget: QWidget) -> QWidget:
 
 
 def keyboard_focus(widget: QWidget) -> QWidget:
-    """Foco por Tab e nao por clique: o anel aparece para quem navega pelo teclado."""
+    """Focus by Tab, not by click: the ring appears for keyboard users."""
     widget.setFocusPolicy(Qt.FocusPolicy.TabFocus)
     return widget
 
@@ -85,7 +85,7 @@ def icon_label(name: str, color: str, size: int = 18) -> QLabel:
 
 
 def rounded_pixmap(data: bytes, width: int, height: int, radius: float = 12) -> QPixmap | None:
-    """Recorta ao centro para preencher o quadro, com cantos arredondados."""
+    """Crops to the center to fill the frame, with rounded corners."""
     image = QImage.fromData(data)
     if image.isNull():
         return None
@@ -110,7 +110,7 @@ def rounded_pixmap(data: bytes, width: int, height: int, radius: float = 12) -> 
 
 
 class FormatCard(QFrame):
-    """Cartao selecionavel do formato (MP3/MP4)."""
+    """Selectable format card (MP3/MP4)."""
 
     clicked = Signal()
 
@@ -167,7 +167,7 @@ class FormatCard(QFrame):
 
 
 class ToggleSwitch(QAbstractButton):
-    """Chave liga/desliga com o botao deslizando."""
+    """On/off switch with a sliding knob."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -195,7 +195,7 @@ class ToggleSwitch(QAbstractButton):
         self._animation.setEndValue(1.0 if checked else 0.0)
         self._animation.start()
 
-    def setChecked(self, checked: bool) -> None:  # noqa: N802 — API do Qt
+    def setChecked(self, checked: bool) -> None:  # noqa: N802 — Qt API
         super().setChecked(checked)
         self._animation.stop()
         self._offset = 1.0 if checked else 0.0
@@ -207,7 +207,7 @@ class ToggleSwitch(QAbstractButton):
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # 3 px de folga em volta para o halo de foco caber no proprio widget.
+        # 3 px of room around it so the focus halo fits inside the widget itself.
         rect = QRectF(4, 4, self.width() - 8, self.height() - 8)
         if self.hasFocus():
             painter.setPen(Qt.PenStyle.NoPen)
@@ -230,7 +230,7 @@ class ToggleSwitch(QAbstractButton):
 
 
 class OptionRow(QFrame):
-    """Linha de opcao: icone, titulo, explicacao e a chave. A linha toda clica."""
+    """Option row: icon, title, explanation, and the switch. The whole row is clickable."""
 
     def __init__(self, icon_name: str, title: str, subtitle: str, parent=None):
         super().__init__(parent)
@@ -258,7 +258,7 @@ class OptionRow(QFrame):
         self._icon.setPixmap(pixmap(self._icon_name, color, 20))
 
     def setAvailable(self, available: bool, reason: str = "") -> None:
-        """Indisponivel desliga e explica — chave apagada sem motivo parece defeito."""
+        """Unavailable turns off and explains — a dimmed switch with no reason looks broken."""
         self.setEnabled(available)
         if not available:
             self.switch.setChecked(False)
@@ -276,11 +276,11 @@ class OptionRow(QFrame):
 
 
 class RangeSlider(QWidget):
-    """Regua do trecho: duas alcas sobre a duracao do video.
+    """Section ruler: two handles over the video's duration.
 
-    As alcas nao se cruzam e ficam a pelo menos `MIN_GAP` segundos: um trecho
-    de zero segundos nao e trecho. Teclado: setas movem 1 s, Shift+setas 10 s;
-    Tab alterna a alca.
+    The handles do not cross and stay at least `MIN_GAP` seconds apart: a
+    zero-second section is not a section. Keyboard: arrows move 1 s, Shift+arrows
+    10 s; Tab switches handles.
     """
 
     rangeChanged = Signal(float, float)
@@ -297,10 +297,10 @@ class RangeSlider(QWidget):
         self._maximum = 0.0
         self._start = 0.0
         self._end = 0.0
-        self._active = 0     # 0 = inicio, 1 = fim
+        self._active = 0     # 0 = start, 1 = end
         self._dragging = False
 
-    # ── Valores ─────────────────────────────────────
+    # ── Values ──────────────────────────────────────
     def maximum(self) -> float:
         return self._maximum
 
@@ -328,7 +328,7 @@ class RangeSlider(QWidget):
         else:
             self.setValues(self._start, max(value, self._start + self.MIN_GAP))
 
-    # ── Geometria ───────────────────────────────────
+    # ── Geometry ────────────────────────────────────
     def _track(self) -> QRectF:
         return QRectF(self._MARGIN, 18, max(1, self.width() - 2 * self._MARGIN), 6)
 
@@ -343,12 +343,12 @@ class RangeSlider(QWidget):
         fraction = min(max((x - track.left()) / track.width(), 0.0), 1.0)
         return round(fraction * self._maximum, 1)
 
-    # ── Mouse e teclado ─────────────────────────────
+    # ── Mouse and keyboard ──────────────────────────
     def mousePressEvent(self, event) -> None:
         if not self._maximum or event.button() != Qt.MouseButton.LeftButton:
             return
         x = event.position().x()
-        # A alca mais perto pega o clique; empate (alcas juntas) vai para o lado do clique.
+        # The nearest handle takes the click; a tie (handles together) goes to the clicked side.
         to_start = abs(x - self.x_for(self._start))
         to_end = abs(x - self.x_for(self._end))
         if to_start == to_end:
@@ -381,8 +381,8 @@ class RangeSlider(QWidget):
             return
         self.update()
 
-    def focusNextPrevChild(self, forward: bool) -> bool:  # noqa: N802 — API do Qt
-        # Tab passa do inicio para o fim antes de sair da regua.
+    def focusNextPrevChild(self, forward: bool) -> bool:  # noqa: N802 — Qt API
+        # Tab moves from start to end before leaving the ruler.
         if forward and self._active == 0:
             self._active = 1
             self.update()
@@ -393,7 +393,7 @@ class RangeSlider(QWidget):
             return True
         return super().focusNextPrevChild(forward)
 
-    # ── Desenho ─────────────────────────────────────
+    # ── Painting ────────────────────────────────────
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -410,7 +410,7 @@ class RangeSlider(QWidget):
         painter.setBrush(gradient if self.isEnabled() else QColor(CLR_BORDER))
         painter.drawRoundedRect(fill, 3, 3)
 
-        # Marcas de tempo: quartos da duracao, para a regua ter escala.
+        # Time marks: quarters of the duration, so the ruler has a scale.
         painter.setPen(QColor(CLR_MUTED))
         font = painter.font()
         font.setPixelSize(10)
@@ -437,7 +437,7 @@ class RangeSlider(QWidget):
 
 
 class PreviewCard(QFrame):
-    """O que o link e: miniatura, titulo, canal e duracao — ou que esta lendo, ou que falhou."""
+    """What the link is: thumbnail, title, channel, and duration — or that it is loading, or failed."""
 
     THUMB_W, THUMB_H = 176, 99
 
@@ -498,7 +498,7 @@ class PreviewCard(QFrame):
             self._badges.insertWidget(position, label(text, "badge" if accent else "badgeMuted"))
 
     def show_loading(self) -> None:
-        """Esqueleto no formato do que vem — miniatura e tres linhas, sem texto."""
+        """A skeleton shaped like what is coming — thumbnail and three lines, no text."""
         self._thumb.setPixmap(QPixmap())
         self._thumb.setStyleSheet(f"background: {BG_HOVER}; border-radius: 12px;")
         self._thumb.setAccessibleName("Lendo o link")

@@ -1,27 +1,27 @@
 """
-SDD — Especificação: validação e classificação de URL
+SDD — Spec: URL validation and classification
 
-CONTRATO
-  `MediaDownloaderApp._valid_url(url)` decide se o botão de download pode ser
-  acionado. Como o aplicativo delega a compatibilidade de plataformas ao
-  yt-dlp, ele aceita links HTTP/HTTPS bem formados de qualquer domínio e deixa
-  a validação de suporte real para a extração. `DownloadManager._url_is_playlist`
-  preserva a identificação explícita de playlists do YouTube, que decide o modo
-  (playlist ou item único), a pasta de destino e o `noplaylist` do yt-dlp.
+CONTRACT
+  `MediaDownloaderApp._valid_url(url)` decides whether the download button can
+  be activated. Since the app delegates platform compatibility to yt-dlp, it
+  accepts well-formed HTTP/HTTPS links from any domain and leaves real support
+  validation to extraction. `DownloadManager._url_is_playlist` keeps the
+  explicit detection of YouTube playlists, which decides the mode (playlist or
+  single item), the destination folder, and yt-dlp's `noplaylist`.
 
-POR QUE EXISTE
-  O produto deixou de ser específico do YouTube: bloquear Vimeo, TikTok ou
-  outras plataformas suportadas pelo yt-dlp contradiz sua proposta. Ainda assim,
-  a distinção da playlist do YouTube é sutil: um link de vídeo QUE ESTÁ dentro de
-  uma playlist (`/watch?v=...&list=...`) é URL válida mas NÃO é modo playlist —
-  o path tem que ser exatamente `/playlist`. Trocar isso faz o app baixar a
-  playlist inteira quando o usuário queria um vídeo só.
+WHY IT EXISTS
+  The product is no longer YouTube-specific: blocking Vimeo, TikTok, or other
+  platforms supported by yt-dlp contradicts its purpose. Even so, the YouTube
+  playlist distinction is subtle: a video link that IS inside a playlist
+  (`/watch?v=...&list=...`) is a valid URL but is NOT playlist mode — the path
+  must be exactly `/playlist`. Getting this wrong makes the app download the
+  whole playlist when the user wanted a single video.
 
-REGRA DE NEGÓCIO
-  - Qualquer URL HTTP/HTTPS com host é aceita; isso não assegura que o site ou
-    conteúdo seja suportado, acessível ou disponível.
-  - Modo playlist exige path `/playlist` E o parâmetro `list`.
-  - `_valid_url` valida FORMATO, nunca existência ou acessibilidade do vídeo.
+BUSINESS RULES
+  - Any HTTP/HTTPS URL with a host is accepted; this does not guarantee that
+    the site or content is supported, accessible, or available.
+  - Playlist mode requires the `/playlist` path AND the `list` parameter.
+  - `_valid_url` validates FORMAT, never the video's existence or accessibility.
 """
 
 import pytest
@@ -30,11 +30,11 @@ from media_downloader.config import SUPPORTED_PLATFORM_NAMES
 from media_downloader.downloader import DownloadManager
 from media_downloader.window import MediaDownloaderApp
 
-valida = MediaDownloaderApp._valid_url
-eh_playlist = DownloadManager._url_is_playlist
+is_valid = MediaDownloaderApp._valid_url
+is_playlist = DownloadManager._url_is_playlist
 
 
-class TestValidacaoDeUrl:
+class TestUrlValidation:
     @pytest.mark.parametrize(
         "url",
         [
@@ -47,8 +47,8 @@ class TestValidacaoDeUrl:
             "http://www.youtube.com/watch?v=abc",
         ],
     )
-    def test_deve_aceitar_quando_o_link_e_http_ou_https_e_bem_formado(self, url):
-        assert valida(url) is True
+    def test_should_accept_when_the_link_is_well_formed_http_or_https(self, url):
+        assert is_valid(url) is True
 
     @pytest.mark.parametrize(
         "url",
@@ -59,43 +59,43 @@ class TestValidacaoDeUrl:
             "https://www.dailymotion.com/video/x123abc",
         ],
     )
-    def test_deve_aceitar_quando_o_link_e_de_outra_plataforma_compativel(self, url):
-        assert valida(url) is True
+    def test_should_accept_when_the_link_is_from_another_compatible_platform(self, url):
+        assert is_valid(url) is True
 
     @pytest.mark.parametrize(
-        "url, motivo",
+        "url, reason",
         [
-            ("", "string vazia"),
-            ("abc", "não é URL"),
-            ("ftp://www.youtube.com/watch?v=abc", "esquema não é http/https"),
-            ("https:///video", "host ausente"),
+            ("", "empty string"),
+            ("abc", "not a URL"),
+            ("ftp://www.youtube.com/watch?v=abc", "scheme is not http/https"),
+            ("https:///video", "missing host"),
         ],
     )
-    def test_deve_recusar_quando_o_link_e_invalido(self, url, motivo):
-        assert valida(url) is False, f"deveria recusar: {motivo}"
+    def test_should_reject_when_the_link_is_invalid(self, url, reason):
+        assert is_valid(url) is False, f"should reject: {reason}"
 
 
-class TestDeteccaoDePlaylist:
-    def test_deve_detectar_playlist_quando_o_path_e_playlist_e_ha_parametro_list(self):
-        assert eh_playlist("https://www.youtube.com/playlist?list=PLabc") is True
+class TestPlaylistDetection:
+    def test_should_detect_playlist_when_the_path_is_playlist_and_list_is_present(self):
+        assert is_playlist("https://www.youtube.com/playlist?list=PLabc") is True
 
-    def test_deve_detectar_playlist_mesmo_com_barra_no_fim(self):
-        assert eh_playlist("https://www.youtube.com/playlist/?list=PLabc") is True
+    def test_should_detect_playlist_even_with_a_trailing_slash(self):
+        assert is_playlist("https://www.youtube.com/playlist/?list=PLabc") is True
 
-    def test_nao_deve_detectar_playlist_quando_e_video_dentro_de_playlist(self):
-        # A distinção que mais custa: o link tem `list=`, mas o usuário pediu UM vídeo.
-        assert eh_playlist("https://www.youtube.com/watch?v=abc&list=PLabc") is False
+    def test_should_not_detect_playlist_when_it_is_a_video_inside_a_playlist(self):
+        # The costliest distinction: the link has `list=`, but the user asked for ONE video.
+        assert is_playlist("https://www.youtube.com/watch?v=abc&list=PLabc") is False
 
-    def test_nao_deve_detectar_playlist_quando_falta_o_parametro_list(self):
-        assert eh_playlist("https://www.youtube.com/playlist") is False
+    def test_should_not_detect_playlist_when_the_list_parameter_is_missing(self):
+        assert is_playlist("https://www.youtube.com/playlist") is False
 
     @pytest.mark.parametrize("url", ["", "abc", "não é url"])
-    def test_deve_devolver_falso_quando_a_url_e_lixo(self, url):
-        assert eh_playlist(url) is False
+    def test_should_return_false_when_the_url_is_garbage(self, url):
+        assert is_playlist(url) is False
 
 
-class TestPlataformasIndicadas:
-    def test_deve_exibir_plataformas_populares_compativeis_na_tela_inicial(self):
+class TestSuggestedPlatforms:
+    def test_should_show_popular_compatible_platforms_on_the_home_screen(self):
         assert {"YouTube", "Vimeo", "TikTok", "Instagram", "SoundCloud", "Dailymotion"} <= set(
             SUPPORTED_PLATFORM_NAMES
         )

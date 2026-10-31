@@ -1,4 +1,4 @@
-"""Catalogo musical e tags do arquivo — nao conhece widget nem fila."""
+"""Music catalog and file tags — knows nothing about widgets or the queue."""
 
 import json
 import re
@@ -32,12 +32,12 @@ _PROMOTIONAL_SUFFIX = re.compile(
 )
 
 
-# Hifen, meia-risca e travessao: o clipe oficial do Queen usa "–".
+# Hyphen, en dash, and em dash: Queen's official video uses "–".
 _ARTIST_SEPARATOR = re.compile(r"\s+[-–—]\s+")
 
 
 def suggest_music_search(source_title: str) -> MusicSearchSuggestion:
-    """Cria uma consulta de catálogo sem transformar inferência em metadata."""
+    """Builds a catalog query without turning inference into metadata."""
     cleaned = _PROMOTIONAL_SUFFIX.sub("", source_title).strip()
     parts = _ARTIST_SEPARATOR.split(cleaned, maxsplit=1)
     if len(parts) < 2:
@@ -49,11 +49,11 @@ def suggest_music_search(source_title: str) -> MusicSearchSuggestion:
 
 
 def metadata_review_reasons(info: dict[str, Any]) -> tuple[str, ...]:
-    """Descreve o que o yt-dlp realmente gravou, sem chamar de ausente o que existe.
+    """Describes what yt-dlp actually wrote, without calling missing what exists.
 
-    O FFmpegMetadata usa artist/artists/creator/creators e, faltando todos,
-    cai para o nome do canal. Vídeo comum do YouTube nunca traz `artist`, então
-    o MP3 sai com o canal como artista — provisório, não ausente.
+    FFmpegMetadata uses artist/artists/creator/creators and, when all are missing,
+    falls back to the channel name. An ordinary YouTube video never has `artist`, so
+    the MP3 ends up with the channel as its artist — provisional, not missing.
     """
     reasons = []
     if not any(info.get(key) for key in ("artist", "artists", "creator", "creators")):
@@ -66,34 +66,34 @@ def metadata_review_reasons(info: dict[str, Any]) -> tuple[str, ...]:
     return tuple(reasons)
 
 
-# Arte de album e quadrada. A miniatura do YouTube e 16:9 — um quadro do video —
-# e o EmbedThumbnail grava ela como esta. A margem e larga porque a propria arte
-# do catalogo nem sempre e exata ("Transit of Venus" vem 600x538, 1,12); o que
-# precisa ficar de fora e video, e o mais estreito deles (4:3) ja e 1,33.
-PROPORCAO_QUADRADA = (0.8, 1.25)
+# Album art is square. A YouTube thumbnail is 16:9 — a video frame — and
+# EmbedThumbnail writes it as is. The margin is wide because the catalog's own art
+# is not always exact ("Transit of Venus" comes as 600x538, 1.12); what must be
+# kept out is video, and the narrowest of those (4:3) is already 1.33.
+SQUARE_RATIO = (0.8, 1.25)
 
 
 def _cover_reason(info: dict[str, Any]) -> str | None:
-    """Diz se a capa embutida resolve ou e so a miniatura da origem."""
+    """Says whether the embedded cover settles it or is just the source's thumbnail."""
     if not (info.get("thumbnail") or info.get("thumbnails")):
         return "capa ausente"
-    medidas = [
+    measured = [
         t for t in (info.get("thumbnails") or [])
         if t.get("width") and t.get("height")
     ]
-    if not medidas:
-        # Sem dimensoes nao da para afirmar nada: o diagnostico descreve o que
-        # foi medido, nunca o que se supoe.
+    if not measured:
+        # Without dimensions nothing can be asserted: the diagnosis describes what
+        # was measured, never what is assumed.
         return None
-    maior = max(medidas, key=lambda t: t["width"])
-    proporcao = maior["width"] / maior["height"]
-    if PROPORCAO_QUADRADA[0] <= proporcao <= PROPORCAO_QUADRADA[1]:
+    largest = max(measured, key=lambda t: t["width"])
+    ratio = largest["width"] / largest["height"]
+    if SQUARE_RATIO[0] <= ratio <= SQUARE_RATIO[1]:
         return None
     return "capa provisoria: miniatura do video"
 
 
 def metadata_review_detail(pending_item: MetadataPendingItem) -> str:
-    """Explica a revisão sem confundir sugestão de busca com tag ausente."""
+    """Explains the review without mistaking a search suggestion for a missing tag."""
     suggestion = suggest_music_search(pending_item.title)
     parts = list(pending_item.review_reasons)
     if suggestion.artist:
@@ -104,7 +104,7 @@ def metadata_review_detail(pending_item: MetadataPendingItem) -> str:
 
 
 class MusicMetadataService:
-    """Cliente mínimo do catálogo; não conhece arquivos nem widgets."""
+    """Minimal catalog client; knows nothing about files or widgets."""
 
     def __init__(
         self,
@@ -118,8 +118,8 @@ class MusicMetadataService:
         self._last_request_at = 0.0
 
     def search(self, suggestion: MusicSearchSuggestion) -> list[MusicMetadataCandidate]:
-        # Texto livre: o iTunes não tem sintaxe de busca, e a ordem que ele
-        # devolve já traz o álbum de estúdio na frente das gravações ao vivo.
+        # Free text: iTunes has no search syntax, and the order it returns
+        # already puts the studio album ahead of live recordings.
         term = " ".join(part for part in (suggestion.artist, suggestion.title) if part)
         query = urlencode({
             "term": term, "media": "music", "entity": "song",
@@ -132,9 +132,9 @@ class MusicMetadataService:
         ]
         return candidates[:CATALOG_RESULTS_SHOWN]
 
-    # O iTunes aceita uns 20 pedidos por minuto e, passado isso, responde 403 (as
-    # vezes 429) por um tempo. Corrigindo uma pasta inteira, desistir no primeiro
-    # 403 deixava faixa obvia na revisao — o limite passa, o pedido nao.
+    # iTunes accepts about 20 requests per minute and, past that, answers 403
+    # (sometimes 429) for a while. When fixing a whole folder, giving up on the first
+    # 403 left obvious tracks in review — the limit passes, the request does not.
     _RATE_LIMIT_CODES = (403, 429)
     _BACKOFF_SECONDS = (15.0, 30.0, 60.0)
 
@@ -169,9 +169,9 @@ class MusicMetadataService:
         return payload
 
     def read_embedded(self, file_path: Path) -> EmbeddedMetadata:
-        """Lê as tags já gravadas — a prévia mostra o arquivo, não uma suposição."""
-        # Arquivo que sumiu não é arquivo sem tags: devolver metadata vazia aqui
-        # faria a interface anunciar "artista gravado: nenhum" para o que não existe.
+        """Reads the tags already written — the preview shows the file, not an assumption."""
+        # A file that disappeared is not a file without tags: returning empty metadata
+        # here would make the interface announce "artista gravado: nenhum" for something that does not exist.
         if not file_path.name or not file_path.is_file():
             raise FileNotFoundError(f"MP3 nao encontrado: {file_path}")
         try:
@@ -225,31 +225,31 @@ class MusicMetadataService:
 
 
 def search_suggestion(pending_item: MetadataPendingItem) -> MusicSearchSuggestion:
-    """Busca da pendencia: o titulo manda, a origem completa o artista que falta."""
+    """Search for a pending item: the title wins; the source fills in a missing artist."""
     suggestion = suggest_music_search(pending_item.title)
     if suggestion.artist or not pending_item.source_artist:
         return suggestion
-    # A origem credita todos os compositores ("Jeremy Renner, Brandon Sammons,
-    # ..."), e com o credito inteiro a busca do iTunes volta vazia.
+    # The source credits every composer ("Jeremy Renner, Brandon Sammons,
+    # ..."), and with the full credit the iTunes search comes back empty.
     artist = pending_item.source_artist.split(",")[0].strip() or pending_item.source_artist
     return MusicSearchSuggestion(title=suggestion.title, artist=artist)
 
 
-# Duracao e o que separa a faixa de estudio da ao vivo, do remix e da versao
-# estendida — que o iTunes devolve com o mesmo nome e o mesmo artista.
-# O clipe oficial costuma ter alguns segundos de abertura a mais que a faixa.
+# Duration is what separates the studio track from the live one, the remix, and the
+# extended version — which iTunes returns with the same name and the same artist.
+# The official video usually has a few seconds of intro more than the track.
 _DURATION_TOLERANCE_SECONDS = 5.0
 _PARENTHETICAL = re.compile(r"\s*[\[(]([^\])]*)[\])]")
 _REMASTER_SUFFIX = re.compile(r"\s+[-–—]\s+[^-–—]*remaster[^-–—]*$")
-# Sufixo que muda o audio fica no titulo: ignorar "(Live At Wembley)" deixaria
-# so a duracao separando o show da faixa de estudio.
+# A suffix that changes the audio stays in the title: ignoring "(Live At Wembley)"
+# would leave only the duration separating the concert from the studio track.
 _VERSION_WORDS = re.compile(
     r"\b(?:live|ao vivo|en vivo|remix|mix|acoustic|acustic[oa]|unplugged|"
     r"version|versao|edit|instrumental|karaoke|cover|demo|sped up|slowed|"
     r"a ?cc?apella)\b")
 
 
-# "(Album Version)" e a propria faixa de estudio, apesar do "version".
+# "(Album Version)" is the studio track itself, despite the "version".
 _STUDIO_VERSION = re.compile(r"^\s*(?:album|lp|original)\s+version\s*$")
 
 
@@ -276,8 +276,8 @@ def _same_title(a: str, b: str) -> bool:
 
 
 def _same_artist(source: str, catalog: str) -> bool:
-    # Credito conjunto ("Queen & David Bowie") contem o artista principal como
-    # sequencia de palavras; contencao solta casaria "Kiss" com "Kissin' Dynamite".
+    # A joint credit ("Queen & David Bowie") contains the main artist as a
+    # word sequence; loose containment would match "Kiss" with "Kissin' Dynamite".
     wanted, found = _normalized_words(source), _normalized_words(catalog)
     if not wanted:
         return False
@@ -287,7 +287,7 @@ def _same_artist(source: str, catalog: str) -> bool:
 def confident_match(
     pending_item: MetadataPendingItem, candidates: list[MusicMetadataCandidate],
 ) -> MusicMetadataCandidate | None:
-    """Candidato que dispensa a revisao: artista, titulo e duracao batem juntos."""
+    """The candidate that needs no review: artist, title, and duration all match."""
     suggestion = search_suggestion(pending_item)
     if not suggestion.artist or pending_item.duration is None:
         return None
@@ -305,11 +305,11 @@ def confident_match(
 def suggested_match(
     pending_item: MetadataPendingItem, candidates: list[MusicMetadataCandidate],
 ) -> MusicMetadataCandidate | None:
-    """O que o app sugere quando a pessoa manda aplicar em todos.
+    """What the app suggests when the user asks to apply to all.
 
-    So existe atras do botao de aplicar em lote — o clique e a autorizacao.
-    Relaxa apenas a duracao, que separa o clipe com abertura da faixa do album;
-    artista e titulo (com a versao) continuam obrigatorios.
+    Exists only behind the batch-apply button — the click is the authorization.
+    Relaxes only the duration, which separates a video with an intro from the album
+    track; artist and title (including the version) remain required.
     """
     safe = confident_match(pending_item, candidates)
     if safe is not None:
@@ -323,7 +323,7 @@ def suggested_match(
             return candidate
     return None
 
-# O que descreve o video e nao a musica: "(Official Music Video)", "[HD]".
+# What describes the video rather than the song: "(Official Music Video)", "[HD]".
 _PACKAGING_WORDS = re.compile(
     r"\b(?:official|oficial|video|clipe|audio|lyrics?|letra|hd|4k|visuali[sz]er|"
     r"remaster(?:ed)?|mv)\b")
@@ -338,15 +338,15 @@ def _folded(text: str) -> str:
 
 def _is_packaging(group: str) -> bool:
     inner = _folded(group).strip()
-    # "(from One Night Only! ... Live at ...)" cita a origem: o "live" ali e do
-    # show de onde o video saiu, nao uma versao que precise ficar no nome.
+    # "(from One Night Only! ... Live at ...)" cites the source: the "live" there is
+    # the concert the video came from, not a version that must stay in the name.
     if inner.startswith("from "):
         return True
     return bool(_PACKAGING_WORDS.search(inner)) and not _VERSION_WORDS.search(inner)
 
 
 def song_title(source_title: str) -> str:
-    """So o nome da musica: sem artista e sem o que embala o video."""
+    """Only the song name: no artist and none of the video's packaging."""
     title = suggest_music_search(source_title).title
     while (match := _TRAILING_GROUP.search(title)) and _is_packaging(match.group(1)):
         title = title[:match.start()]
@@ -362,15 +362,15 @@ _MAX_STEM = 150
 
 
 def safe_file_stem(name: str) -> str:
-    """Nome aceito no Linux, no Windows e no macOS."""
+    """A name accepted on Linux, Windows, and macOS."""
     stem = " ".join(name.translate(_FORBIDDEN_IN_FILENAME).split())
-    # Windows recusa nome terminado em ponto ou espaco.
+    # Windows rejects names ending in a dot or a space.
     stem = stem[:_MAX_STEM].rstrip(" .")
     return stem or "Faixa"
 
 
 def rename_to_song(path: Path, name: str) -> Path:
-    """Renomeia para `name` sem sobrescrever outra musica de mesmo nome."""
+    """Renames to `name` without overwriting another song with the same name."""
     stem = safe_file_stem(name)
     target = path.with_name(f"{stem}{path.suffix}")
     copy = 2

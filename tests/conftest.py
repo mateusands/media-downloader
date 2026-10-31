@@ -1,10 +1,10 @@
-"""Os testes de interface usam widgets Qt de verdade, sem abrir janela na tela."""
+"""The UI tests use real Qt widgets without opening a window on screen."""
 
 import os
 
 import pytest
 
-# Antes de qualquer import do Qt: sem tela (CI, SSH) o plugin padrao aborta.
+# Before any Qt import: without a display (CI, SSH) the default plugin aborts.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
@@ -17,7 +17,7 @@ def qapp():
 
 
 @pytest.fixture(autouse=True)
-def _config_isolada(tmp_path, monkeypatch):
-    """A janela le e grava configuracao e historico: nunca os da pessoa."""
+def _isolated_config(tmp_path, monkeypatch):
+    """The window reads and writes settings and history: never the user's own."""
     monkeypatch.setattr("media_downloader.window.HISTORY_PATH", tmp_path / "historico.json")
     monkeypatch.setattr("media_downloader.window.SETTINGS_PATH", tmp_path / "config.json")

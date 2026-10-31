@@ -1,39 +1,41 @@
 """
-SDD — Especificação: interpretação do resultado do yt-dlp e relato de falhas
+SDD — Spec: interpreting the yt-dlp result and reporting failures
 
-CONTRATO
-  Depois de `_extract_info`, o `DownloadManager` precisa decidir duas coisas a
-  partir de um dicionário que o yt-dlp devolve num formato variável:
-  `_is_playlist_result(info)` — o que veio é mesmo uma playlist?
-  (Quantos itens serão baixados agora é a escolha da pessoa; a numeração que
-  respeita os buracos vive em `playlist_entries`, coberta em test_playlist.py.)
-  E o `ReportingLogger` traduz a saída do yt-dlp em duas listas distintas:
-  `summary.failed_items` (erro) e `summary.extractor_notices` (aviso), que o
-  resumo final reconcilia com os itens efetivamente baixados.
+CONTRACT
+  After `_extract_info`, the `DownloadManager` must decide two things from a
+  dictionary that yt-dlp returns in a variable shape:
+  `_is_playlist_result(info)` — is what came back really a playlist?
+  (How many items will be downloaded now is the user's choice; the numbering
+  that respects the gaps lives in `playlist_entries`, covered in
+  test_playlist.py.)
+  And `ReportingLogger` translates yt-dlp output into two distinct lists:
+  `summary.failed_items` (error) and `summary.extractor_notices` (warning),
+  which the final summary reconciles with the items actually downloaded.
 
-POR QUE EXISTE
-  `ignoreerrors: True` faz o yt-dlp CONTINUAR a playlist quando um item falha e
-  colocar `None` no lugar da entrada quebrada — um buraco, não um item. O modo playlist
-  também é reavaliado aqui: a URL pode parecer playlist e o resultado vir único.
-  Além disso, o yt-dlp pode registrar diagnóstico técnico como erro e ainda
-  concluir o download; sem reconciliação, o resumo mostra uma falha falsa.
-  A opção de metadata de MP3 também pode não encontrar artista ou capa em todos
-  os itens de uma playlist. Isso é pendência de enriquecimento, nunca falha de
-  download.
+WHY IT EXISTS
+  `ignoreerrors: True` makes yt-dlp CONTINUE the playlist when an item fails
+  and put `None` in place of the broken entry — a gap, not an item. Playlist
+  mode is also re-evaluated here: the URL may look like a playlist and the
+  result come back single. In addition, yt-dlp may log a technical diagnostic
+  as an error and still finish the download; without reconciliation, the
+  summary shows a false failure.
+  The MP3 metadata option may also not find an artist or cover for every item
+  of a playlist. That is pending enrichment, never a download failure.
 
-REGRA DE NEGÓCIO
-  - Entrada `None` numa playlist é buraco, não item.
-  - Falha repetida não é listada duas vezes no resumo.
-  - Aviso do extrator não é item que falhou. O alerta de runtime JavaScript
-    ausente aparece em download que conclui inteiro; contá-lo como falha fazia
-    um vídeo só virar "2 item(s) com falha" no resumo.
-  - A mensagem é limpa antes de ser comparada e exibida: a saída do yt-dlp vem
-    colorida, e sem remover o escape ANSI o prefixo não casa, o mesmo erro entra
-    duas vezes e o usuário lê códigos de terminal no diálogo.
-  - Se todos os itens previstos foram baixados, diagnósticos do extrator não são
-    exibidos como falhas ao usuário.
-  - Metadata ausente em MP3 concluído vai para `metadata_pending_items`, separada
-    de `failed_items`.
+BUSINESS RULES
+  - A `None` entry in a playlist is a gap, not an item.
+  - A repeated failure is not listed twice in the summary.
+  - An extractor warning is not a failed item. The missing JavaScript runtime
+    alert shows up in downloads that finish completely; counting it as a
+    failure turned a single video into "2 item(s) com falha" in the summary.
+  - The message is cleaned before being compared and displayed: yt-dlp output
+    is coloured, and without removing the ANSI escape the prefix does not
+    match, the same error goes in twice, and the user reads terminal codes in
+    the dialog.
+  - If all expected items were downloaded, extractor diagnostics are not shown
+    to the user as failures.
+  - Missing metadata in a finished MP3 goes to `metadata_pending_items`,
+    separate from `failed_items`.
 """
 
 import queue
@@ -47,131 +49,131 @@ from media_downloader.downloader import (
 )
 from media_downloader.models import DownloadSummary, MetadataPendingItem
 
-eh_playlist_resultado = DownloadManager._is_playlist_result
+is_playlist_result = DownloadManager._is_playlist_result
 
 
-class TestClassificacaoDoResultado:
-    def test_deve_ser_playlist_quando_ha_entries(self):
-        assert eh_playlist_resultado({"entries": [{"id": "a"}]}) is True
+class TestResultClassification:
+    def test_should_be_a_playlist_when_there_are_entries(self):
+        assert is_playlist_result({"entries": [{"id": "a"}]}) is True
 
-    def test_deve_ser_playlist_quando_o_tipo_declara_playlist(self):
-        assert eh_playlist_resultado({"_type": "playlist"}) is True
+    def test_should_be_a_playlist_when_the_type_declares_playlist(self):
+        assert is_playlist_result({"_type": "playlist"}) is True
 
-    def test_nao_deve_ser_playlist_quando_o_resultado_e_um_video_unico(self):
-        assert eh_playlist_resultado({"id": "abc", "title": "Um vídeo"}) is False
+    def test_should_not_be_a_playlist_when_the_result_is_a_single_video(self):
+        assert is_playlist_result({"id": "abc", "title": "Um vídeo"}) is False
 
-    def test_nao_deve_ser_playlist_quando_entries_vem_vazio(self):
-        # Caso real: URL de playlist que resolveu para um item só.
-        assert eh_playlist_resultado({"entries": []}) is False
+    def test_should_not_be_a_playlist_when_entries_is_empty(self):
+        # Real case: a playlist URL that resolved to a single item.
+        assert is_playlist_result({"entries": []}) is False
 
 
-class TestRelatoDeFalhas:
+class TestFailureReporting:
     def _logger(self):
-        fila = queue.Queue()
-        resumo = DownloadSummary()
-        return ReportingLogger(fila, resumo), fila, resumo
+        event_queue = queue.Queue()
+        summary = DownloadSummary()
+        return ReportingLogger(event_queue, summary), event_queue, summary
 
-    def test_deve_registrar_a_falha_e_avisar_que_segue_com_os_demais(self):
-        logger, fila, resumo = self._logger()
+    def test_should_record_the_failure_and_say_it_continues_with_the_rest(self):
+        logger, event_queue, summary = self._logger()
 
         logger.error("ERROR: Video unavailable")
 
-        assert resumo.failed_items == ["Video unavailable"]
-        evento = fila.get_nowait()
-        assert evento["type"] == "status"
-        assert "continuando" in evento["message"].lower()
+        assert summary.failed_items == ["Video unavailable"]
+        event = event_queue.get_nowait()
+        assert event["type"] == "status"
+        assert "continuando" in event["message"].lower()
 
-    def test_deve_remover_o_prefixo_error_da_mensagem(self):
-        logger, _, resumo = self._logger()
+    def test_should_remove_the_error_prefix_from_the_message(self):
+        logger, _, summary = self._logger()
 
         logger.error("ERROR:   Private video  ")
 
-        assert resumo.failed_items == ["Private video"]
+        assert summary.failed_items == ["Private video"]
 
-    def test_nao_deve_listar_a_mesma_falha_duas_vezes(self):
-        logger, fila, resumo = self._logger()
+    def test_should_not_list_the_same_failure_twice(self):
+        logger, event_queue, summary = self._logger()
 
         logger.error("ERROR: Video unavailable")
         logger.error("ERROR: Video unavailable")
 
-        assert resumo.failed_items == ["Video unavailable"]
-        assert fila.qsize() == 1, "o segundo relato não deve gerar novo aviso"
+        assert summary.failed_items == ["Video unavailable"]
+        assert event_queue.qsize() == 1, "the second report must not produce a new notice"
 
-    def test_deve_registrar_warning_como_aviso_e_nao_como_falha(self):
-        logger, fila, resumo = self._logger()
+    def test_should_record_a_warning_as_a_notice_and_not_as_a_failure(self):
+        logger, event_queue, summary = self._logger()
 
         logger.warning("WARNING: alguns formatos podem faltar")
 
-        assert resumo.failed_items == []
-        assert resumo.extractor_notices == ["alguns formatos podem faltar"]
-        assert fila.empty(), "aviso nao anuncia item que falhou"
+        assert summary.failed_items == []
+        assert summary.extractor_notices == ["alguns formatos podem faltar"]
+        assert event_queue.empty(), "a warning does not announce a failed item"
 
-    def test_nao_deve_registrar_mensagem_vazia(self):
-        logger, fila, resumo = self._logger()
+    def test_should_not_record_an_empty_message(self):
+        logger, event_queue, summary = self._logger()
 
         logger.error("ERROR:   ")
 
-        assert resumo.failed_items == []
-        assert fila.empty()
+        assert summary.failed_items == []
+        assert event_queue.empty()
 
-    def test_debug_nao_deve_registrar_nada(self):
-        logger, fila, resumo = self._logger()
+    def test_should_record_nothing_when_the_message_is_debug(self):
+        logger, event_queue, summary = self._logger()
 
         logger.debug("baixando fragmento 3/10")
 
-        assert resumo.failed_items == []
-        assert fila.empty()
+        assert summary.failed_items == []
+        assert event_queue.empty()
 
 
-class TestResumoDeFalhas:
-    def test_deve_ignorar_alerta_tecnico_quando_todos_os_itens_foram_baixados(self):
-        resumo = DownloadSummary(
+class TestFailureSummary:
+    def test_should_ignore_a_technical_alert_when_all_items_were_downloaded(self):
+        summary = DownloadSummary(
             total_items=1,
             downloaded_count=1,
             failed_items=["[youtube] No supported JavaScript runtime could be found."],
         )
 
-        DownloadManager._reconcile_failure_reports(resumo)
+        DownloadManager._reconcile_failure_reports(summary)
 
-        assert resumo.failed_items == []
+        assert summary.failed_items == []
 
-    def test_deve_manter_falha_quando_nem_todos_os_itens_foram_baixados(self):
-        resumo = DownloadSummary(
+    def test_should_keep_the_failure_when_not_all_items_were_downloaded(self):
+        summary = DownloadSummary(
             total_items=2,
             downloaded_count=1,
             failed_items=["Private video"],
         )
 
-        DownloadManager._reconcile_failure_reports(resumo)
+        DownloadManager._reconcile_failure_reports(summary)
 
-        assert resumo.failed_items == ["Private video"]
+        assert summary.failed_items == ["Private video"]
 
 
-class TestMetadataDeMp3:
-    def _opts(self, incluir_metadata: bool):
+class TestMp3Metadata:
+    def _opts(self, include_metadata: bool):
         manager = DownloadManager(queue.Queue())
         return manager._build_opts(
-            Path("/tmp/destino"), "mp3", False, DownloadSummary(), incluir_metadata,
+            Path("/tmp/destino"), "mp3", False, DownloadSummary(), include_metadata,
         )
 
-    def test_deve_manter_o_mp3_atual_quando_a_opcao_de_metadata_esta_desligada(self):
-        opts = self._opts(incluir_metadata=False)
+    def test_should_keep_the_current_mp3_when_the_metadata_option_is_off(self):
+        opts = self._opts(include_metadata=False)
 
         assert "writethumbnail" not in opts
         assert [item["key"] for item in opts["postprocessors"]] == ["FFmpegExtractAudio"]
 
-    def test_deve_pedir_capa_e_metadados_da_origem_quando_a_opcao_esta_ligada(self):
-        opts = self._opts(incluir_metadata=True)
+    def test_should_request_source_cover_and_metadata_when_the_option_is_on(self):
+        opts = self._opts(include_metadata=True)
 
         assert opts["writethumbnail"] is True
         assert [item["key"] for item in opts["postprocessors"]] == [
             "FFmpegExtractAudio", "FFmpegMetadata", "EmbedThumbnail",
         ]
 
-    def test_deve_listar_metadata_a_revisar_sem_marcar_o_item_como_falha(self):
-        resumo = DownloadSummary(total_items=1)
+    def test_should_list_metadata_to_review_without_marking_the_item_as_failed(self):
+        summary = DownloadSummary(total_items=1)
         manager = DownloadManager(queue.Queue())
-        hook = manager._make_progress_hook(resumo, include_metadata=True)
+        hook = manager._make_progress_hook(summary, include_metadata=True)
 
         hook({
             "status": "finished",
@@ -179,17 +181,17 @@ class TestMetadataDeMp3:
             "info_dict": {"id": "abba-1", "title": "ABBA - Dancing Queen"},
         })
 
-        assert resumo.downloaded_count == 1
-        assert resumo.failed_items == []
-        assert len(resumo.metadata_pending_items) == 1
-        pendencia = resumo.metadata_pending_items[0]
-        assert pendencia.title == "ABBA - Dancing Queen"
-        assert pendencia.review_reasons == ("artista ausente", "capa ausente")
+        assert summary.downloaded_count == 1
+        assert summary.failed_items == []
+        assert len(summary.metadata_pending_items) == 1
+        pending = summary.metadata_pending_items[0]
+        assert pending.title == "ABBA - Dancing Queen"
+        assert pending.review_reasons == ("artista ausente", "capa ausente")
 
-    def test_deve_nomear_o_canal_que_virou_artista_em_vez_de_dizer_que_falta(self):
-        resumo = DownloadSummary(total_items=1)
+    def test_should_name_the_channel_that_became_the_artist_instead_of_saying_it_is_missing(self):
+        summary = DownloadSummary(total_items=1)
         manager = DownloadManager(queue.Queue())
-        hook = manager._make_progress_hook(resumo, include_metadata=True)
+        hook = manager._make_progress_hook(summary, include_metadata=True)
 
         hook({
             "status": "finished",
@@ -202,14 +204,14 @@ class TestMetadataDeMp3:
             },
         })
 
-        assert resumo.metadata_pending_items[0].review_reasons == (
+        assert summary.metadata_pending_items[0].review_reasons == (
             "artista provisorio: canal AudioslaveVEVO",
         )
 
-    def test_nao_deve_listar_pendencia_quando_artista_e_capa_estao_disponiveis(self):
-        resumo = DownloadSummary(total_items=1)
+    def test_should_not_list_a_pending_item_when_artist_and_cover_are_available(self):
+        summary = DownloadSummary(total_items=1)
         manager = DownloadManager(queue.Queue())
-        hook = manager._make_progress_hook(resumo, include_metadata=True)
+        hook = manager._make_progress_hook(summary, include_metadata=True)
 
         hook({
             "status": "finished",
@@ -222,56 +224,56 @@ class TestMetadataDeMp3:
             },
         })
 
-        assert resumo.metadata_pending_items == []
+        assert summary.metadata_pending_items == []
 
 
-class TestRelatoLimpoDoExtrator:
-    """O que o usuário lê no resumo não é a saída crua do yt-dlp."""
+class TestCleanExtractorReport:
+    """What the user reads in the summary is not raw yt-dlp output."""
 
     def _logger(self):
-        resumo = DownloadSummary(total_items=1)
-        return ReportingLogger(queue.Queue(), resumo), resumo
+        summary = DownloadSummary(total_items=1)
+        return ReportingLogger(queue.Queue(), summary), summary
 
-    def test_deve_remover_codigos_de_cor_da_mensagem_relatada(self):
-        logger, resumo = self._logger()
+    def test_should_remove_colour_codes_from_the_reported_message(self):
+        logger, summary = self._logger()
 
         logger.error("\x1b[0;31mERROR:\x1b[0m unable to download video data: HTTP Error 403")
 
-        assert resumo.failed_items == ["unable to download video data: HTTP Error 403"]
+        assert summary.failed_items == ["unable to download video data: HTTP Error 403"]
 
-    def test_deve_tratar_como_repetida_a_falha_que_so_difere_na_cor(self):
-        logger, resumo = self._logger()
+    def test_should_treat_as_repeated_a_failure_that_differs_only_in_colour(self):
+        logger, summary = self._logger()
 
         logger.error("\x1b[0;31mERROR:\x1b[0m Video unavailable")
         logger.error("ERROR: Video unavailable")
 
-        assert resumo.failed_items == ["Video unavailable"]
+        assert summary.failed_items == ["Video unavailable"]
 
-    def test_deve_separar_aviso_do_extrator_da_falha_de_item(self):
-        logger, resumo = self._logger()
+    def test_should_separate_an_extractor_warning_from_an_item_failure(self):
+        logger, summary = self._logger()
 
         logger.warning("[youtube] No supported JavaScript runtime could be found.")
         logger.error("ERROR: unable to download video data: HTTP Error 403")
 
-        assert resumo.failed_items == ["unable to download video data: HTTP Error 403"]
-        assert resumo.extractor_notices == [
+        assert summary.failed_items == ["unable to download video data: HTTP Error 403"]
+        assert summary.extractor_notices == [
             "[youtube] No supported JavaScript runtime could be found."
         ]
 
-    def test_deve_esquecer_avisos_quando_todos_os_itens_foram_baixados(self):
-        resumo = DownloadSummary(
+    def test_should_forget_warnings_when_all_items_were_downloaded(self):
+        summary = DownloadSummary(
             total_items=1,
             downloaded_count=1,
             extractor_notices=["[youtube] No supported JavaScript runtime could be found."],
         )
 
-        DownloadManager._reconcile_failure_reports(resumo)
+        DownloadManager._reconcile_failure_reports(summary)
 
-        assert resumo.extractor_notices == []
+        assert summary.extractor_notices == []
 
 
-class TestOpcoesDeSaidaDoExtrator:
-    def test_deve_pedir_saida_sem_cor_para_o_resumo_nao_receber_escapes(self):
+class TestExtractorOutputOptions:
+    def test_should_request_colourless_output_so_the_summary_gets_no_escapes(self):
         manager = DownloadManager(queue.Queue())
 
         opts = manager._build_opts(Path("/tmp/destino"), "mp3", False, DownloadSummary())
@@ -279,58 +281,58 @@ class TestOpcoesDeSaidaDoExtrator:
         assert opts["no_color"] is True
 
 
-class TestTamanhoDoResumo:
-    """O resumo responde 'o que aconteceu?'; a revisão responde 'o que corrigir?'."""
+class TestSummaryLength:
+    """The summary answers 'what happened?'; the review answers 'what to fix?'."""
 
-    def _pendencias(self, quantidade):
+    def _pending_items(self, count):
         return [
             MetadataPendingItem(
                 f"Faixa numero {n} com um titulo bem longo (Official Video)",
                 f"/tmp/faixa{n}.mp3",
                 ("artista provisorio: canal Algum Canal", "capa provisoria: miniatura do video"),
             )
-            for n in range(quantidade)
+            for n in range(count)
         ]
 
-    def test_deve_contar_a_pendencia_em_vez_de_listar_item_a_item(self):
-        resumo = DownloadSummary(
+    def test_should_count_pending_items_instead_of_listing_each_one(self):
+        summary = DownloadSummary(
             total_items=7, downloaded_count=7,
-            metadata_pending_items=self._pendencias(7),
+            metadata_pending_items=self._pending_items(7),
         )
 
-        linhas = summary_lines(resumo)
-        texto = "\n".join(linhas)
+        lines = summary_lines(summary)
+        text = "\n".join(lines)
 
-        assert "7 MP3 com metadata a confirmar" in texto
-        assert "Faixa numero" not in texto, "o detalhe por item pertence à revisão"
-        assert "revisao" in texto.lower(), "o resumo precisa dizer que a revisão vem em seguida"
+        assert "7 MP3 com metadata a confirmar" in text
+        assert "Faixa numero" not in text, "per-item detail belongs to the review"
+        assert "revisao" in text.lower(), "the summary must say the review comes next"
 
-    def test_deve_manter_o_resumo_curto_mesmo_em_playlist_grande(self):
-        resumo = DownloadSummary(
+    def test_should_keep_the_summary_short_even_for_a_large_playlist(self):
+        summary = DownloadSummary(
             total_items=40, downloaded_count=40,
-            metadata_pending_items=self._pendencias(40),
+            metadata_pending_items=self._pending_items(40),
         )
 
-        assert len(summary_lines(resumo)) <= 6
+        assert len(summary_lines(summary)) <= 6
 
-    def test_deve_limitar_a_lista_de_falhas_e_dizer_quantas_sobraram(self):
-        resumo = DownloadSummary(
+    def test_should_cap_the_failure_list_and_say_how_many_remain(self):
+        summary = DownloadSummary(
             total_items=10, downloaded_count=2,
             failed_items=[f"Video {n} indisponivel" for n in range(8)],
         )
 
-        linhas = summary_lines(resumo)
+        lines = summary_lines(summary)
 
-        assert sum(1 for l in linhas if l.startswith("  - Video")) == FAILURES_SHOWN
-        assert f"e mais {8 - FAILURES_SHOWN}" in "\n".join(linhas)
+        assert sum(1 for l in lines if l.startswith("  - Video")) == FAILURES_SHOWN
+        assert f"e mais {8 - FAILURES_SHOWN}" in "\n".join(lines)
 
-    def test_deve_listar_todas_as_falhas_quando_cabem(self):
-        resumo = DownloadSummary(
+    def test_should_list_every_failure_when_they_fit(self):
+        summary = DownloadSummary(
             total_items=3, downloaded_count=1,
             failed_items=["Video privado", "Video removido"],
         )
 
-        texto = "\n".join(summary_lines(resumo))
+        text = "\n".join(summary_lines(summary))
 
-        assert "Video privado" in texto and "Video removido" in texto
-        assert "e mais" not in texto
+        assert "Video privado" in text and "Video removido" in text
+        assert "e mais" not in text
