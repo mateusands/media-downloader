@@ -2,15 +2,17 @@
 SDD — Especificação: acionamento dos controles principais
 
 CONTRATO
-  Um botão visual do Media Downloader deve preservar o mecanismo de clique do
-  CustomTkinter: ao liberar o mouse dentro de um botão habilitado, o comando
-  associado precisa ser executado.
+  Os controles da janela principal disparam a ação que anunciam: "Baixar"
+  chama `start_download`, "Abrir" cria e abre a pasta de destino, e o campo de
+  link aceita colar sobre uma seleção trocando o trecho.
 
 POR QUE EXISTE
-  `HoverButton` adicionava feedback visual sobrescrevendo `_on_release`, um
-  método interno de `CTkButton` responsável por chamar `command`. O resultado
-  era uma tela aparentemente normal em que "Baixar mídia" e "Abrir pasta" não
-  faziam nada — inclusive a pasta Downloads não era criada.
+  No CustomTkinter, um botão com feedback visual sobrescrevia o método interno
+  que chama `command`, e "Baixar mídia" não fazia nada numa tela aparentemente
+  normal. Na troca para Qt, o mesmo risco existe em qualquer widget próprio
+  (cartão de formato, linha de opção): estilo não pode impedir a ação.
+  Colar sobre a URL selecionada duplicava o link no Tk do X11; o `QLineEdit`
+  troca a seleção nativamente, e o teste garante que continue assim.
 
 REGRA DE NEGÓCIO
   Estilo visual adicional não pode impedir a ação solicitada pelo usuário.
@@ -21,295 +23,345 @@ SDD — Especificação: encerramento da revisão de metadata
 
 CONTRATO
   `MetadataReview.resolve(item)` tira da tela a pendência que acabou de ser
-  importada. Sem nenhuma pendência restante, a janela de revisão fecha sozinha.
-  Quem é dono desse estado é `review.py`, não a janela principal: os diálogos
-  abrem e fecham sem ela saber.
+  importada. Sem nenhuma pendência restante, o diálogo de revisão fecha sozinho.
+  Quem é dono desse estado é `review.py`, não a janela principal.
 
 POR QUE EXISTE
   Depois de escolher um resultado do catálogo, a janela de candidatos fechava
   mas a de revisão continuava aberta, oferecendo "Buscar metadata" para um
-  arquivo já resolvido. O usuário tinha que fechar a janela na mão para
-  descobrir que não faltava mais nada.
+  arquivo já resolvido.
 
 REGRA DE NEGÓCIO
-  - Só a importação concluída (`metadata_applied`) resolve a linha; erro de
-    importação a mantém, senão a pendência some sem ter sido atendida.
+  - Só a importação concluída (`metadata_applied`) resolve a linha.
   - Em playlist, resolver um item não pode fechar a revisão dos outros.
-  - A imagem da capa sai junto com a linha: guardá-la vaza memória por item
-    que não está mais em cena.
 
 ---
 
-SDD — Especificação: colar link sobre uma seleção
+SDD — Especificação: fila de buscas no catálogo
 
 CONTRATO
-  `_paste_over_selection()` atende ao `<<Paste>>` do campo de link: apaga o
-  trecho selecionado antes de inserir, e devolve "break".
+  `start_search(item)` enfileira; uma busca corre por vez; `search_finished`
+  (no resultado ou no erro) libera a próxima.
 
 POR QUE EXISTE
-  O binding de classe do Tk no X11 insere no ponto de inserção sem apagar a
-  seleção. Selecionar a URL inteira e apertar Ctrl+V colava o novo link
-  grudado no antigo (`.../AAAhttps://.../BBB`) em vez de substituí-lo.
-  O "break" é parte do contrato: sem ele o binding de classe roda em seguida
-  e insere o texto uma segunda vez.
+  Em playlist a pessoa clica em vários itens seguidos; recusar o segundo
+  clique transformava isso em clicar, esperar, clicar de novo.
 
-REGRA DE NEGÓCIO
-  - Sem seleção, colar insere no cursor, como em qualquer campo de texto.
-  - Área de transferência vazia ou não textual deixa o campo intacto.
-  - O botão "Colar" continua substituindo o campo inteiro: ele é atalho para
-    "põe o link aqui", não uma edição pontual.
+---
+
+SDD — Especificação: teclado e estados de página
+
+CONTRATO
+  - Todo controle da página de download é alcançável com Tab e mostra foco:
+    cartões de formato, chips de qualidade, chave do trecho, régua e chaves dos
+    extras.
+  - O histórico vazio explica e oferece o próximo passo ("Baixar algo"), que
+    leva à página de download com o foco no campo de link.
+
+POR QUE EXISTE
+  Os cartões e as chaves são widgets desenhados aqui, não nativos: o Qt não dá
+  foco nem anel de foco a eles sem pedir. E um estado vazio que só diz "nada
+  ainda" deixa a pessoa sem saída (regra "nothing yet = explain + create" da
+  skill app-shell do crewkit).
+
+---
+
+SDD — Especificação: a prévia é do link que está no campo
+
+CONTRATO
+  A janela só aplica o evento `preview` cuja URL é a que está no campo agora.
+
+POR QUE EXISTE
+  A prévia roda numa thread e pode chegar depois que a pessoa trocou o link:
+  mostrar a miniatura e a duração do vídeo anterior faria a régua do trecho
+  cortar com a duração errada.
 """
 
+from collections import deque
+from types import SimpleNamespace
+
+import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QWidget
+
 from media_downloader import window
-from media_downloader.models import MetadataPendingItem
+from media_downloader.models import MediaPreview, MetadataPendingItem
 from media_downloader.review import MetadataReview
-from media_downloader.widgets import HoverButton
 from media_downloader.window import MediaDownloaderApp
 
 
+@pytest.fixture
+def app_window(qapp, tmp_path):
+    janela = MediaDownloaderApp()
+    janela._downloads_dir = tmp_path / "Downloads"
+    janela._probe_timer.stop()
+    yield janela
+    janela._poll_timer.stop()
+    janela.close()
+    janela.deleteLater()
+
+
 class TestAcionamentoDosControles:
-    def test_deve_executar_o_comando_quando_o_botao_e_liberado_dentro_da_area(self):
+    def test_deve_iniciar_o_download_quando_o_botao_baixar_e_clicado(self, app_window, monkeypatch):
         chamadas = []
-        botao = object.__new__(HoverButton)
-        botao._mouse_inside = True
-        botao._state = "normal"
-        botao._command = lambda: chamadas.append("executado")
-        botao._on_leave = lambda: None
-        botao._click_animation = lambda: None
-        botao.after = lambda _ms, _callback: None
+        monkeypatch.setattr(app_window, "start_download", lambda: chamadas.append("baixar"))
+        # O sinal foi ligado ao metodo original; religa para ver o clique chegar.
+        app_window.download_btn.clicked.disconnect()
+        app_window.download_btn.clicked.connect(app_window.start_download)
 
-        botao._on_release()
+        QTest.mouseClick(app_window.download_btn, Qt.MouseButton.LeftButton)
 
-        assert chamadas == ["executado"]
+        assert chamadas == ["baixar"]
+
+    def test_clicar_no_cartao_mp4_deve_trocar_o_formato(self, app_window):
+        QTest.mouseClick(app_window._mp4_card, Qt.MouseButton.LeftButton)
+
+        assert app_window._format == "mp4"
+        assert app_window._mp4_card.isSelected()
+        assert not app_window._mp3_card.isSelected()
+
+    def test_clicar_na_linha_da_opcao_deve_ligar_a_chave(self, app_window):
+        app_window._set_format("mp4")
+
+        QTest.mouseClick(app_window.subtitles_row, Qt.MouseButton.LeftButton)
+
+        assert app_window.subtitles_row.isChecked()
+
+    def test_link_invalido_deve_avisar_sem_iniciar_download(self, app_window):
+        app_window.url_entry.setText("nao e link")
+
+        app_window.start_download()
+
+        assert app_window._thread is None
+        assert "inválido" in app_window._url_hint.text()
+
+
+class TestTecladoEEstadosDePagina:
+    def test_deve_alcancar_pelo_tab_todos_os_controles_da_pagina(self, app_window):
+        controles = [app_window._mp3_card, app_window._mp4_card, app_window.clip_switch,
+                     app_window.clip_slider, app_window.subtitles_row.switch,
+                     *app_window._quality_buttons.values()]
+
+        sem_tab = [type(c).__name__ for c in controles
+                   if not c.focusPolicy() & Qt.FocusPolicy.TabFocus]
+
+        assert sem_tab == []
+
+    def test_historico_vazio_deve_levar_a_pagina_de_download(self, app_window):
+        app_window._show_page(1)
+
+        app_window._history_empty_action.click()
+
+        assert app_window._pages.currentIndex() == 0
 
 
 class TestAberturaDaPastaDeDownloads:
-    def test_deve_criar_e_abrir_a_pasta_com_xdg_open_no_linux(self, tmp_path, monkeypatch):
+    def test_deve_criar_e_abrir_a_pasta_com_xdg_open_no_linux(self, app_window, monkeypatch):
         chamadas = []
-        aplicativo = object.__new__(MediaDownloaderApp)
-        destino = tmp_path / "Downloads"
-        aplicativo._downloads_dir = destino
         monkeypatch.setattr(window.sys, "platform", "linux")
         monkeypatch.setattr(window.subprocess, "Popen", lambda argumentos: chamadas.append(argumentos))
 
-        aplicativo.open_downloads_folder()
+        app_window.open_downloads_folder()
 
-        assert destino.is_dir()
-        assert chamadas == [["xdg-open", str(destino)]]
-
-
-class TestEncerramentoDaRevisaoDeMetadata:
-    """A revisão existe para resolver pendências; item resolvido não fica em cena."""
-
-    class _WidgetFalso:
-        def __init__(self):
-            self.destruido = False
-
-        def winfo_exists(self):
-            return not self.destruido
-
-        def destroy(self):
-            self.destruido = True
-
-    def _revisao(self, pendentes):
-        aplicativo = object.__new__(MetadataReview)
-        aplicativo._metadata_review_rows = {
-            item: (self._WidgetFalso(), self._WidgetFalso(), self._WidgetFalso(),
-                   self._WidgetFalso())
-            for item in pendentes
-        }
-        aplicativo._metadata_embedded_images = {item: object() for item in pendentes}
-        aplicativo._metadata_review_window = self._WidgetFalso()
-        return aplicativo
-
-    def test_deve_fechar_a_revisao_quando_a_ultima_pendencia_foi_importada(self):
-        item = MetadataPendingItem("Paramore - All I Wanted", "/tmp/faixa.mp3", ("artista provisorio: canal Paramore",))
-        aplicativo = self._revisao([item])
-        janela = aplicativo._metadata_review_window
-
-        aplicativo.resolve(item)
-
-        assert janela.destruido is True
-        assert aplicativo._metadata_review_rows == {}
-        assert aplicativo._metadata_embedded_images == {}
-
-    def test_deve_manter_a_revisao_aberta_enquanto_houver_outra_pendencia(self):
-        importado = MetadataPendingItem("Faixa A", "/tmp/a.mp3", ("artista ausente",))
-        restante = MetadataPendingItem("Faixa B", "/tmp/b.mp3", ("artista ausente",))
-        aplicativo = self._revisao([importado, restante])
-        janela = aplicativo._metadata_review_window
-        linha_importada = aplicativo._metadata_review_rows[importado][0]
-
-        aplicativo.resolve(importado)
-
-        assert linha_importada.destruido is True
-        assert janela.destruido is False
-        assert list(aplicativo._metadata_review_rows) == [restante]
-
-    def test_deve_ignorar_item_que_nao_esta_na_revisao(self):
-        item = MetadataPendingItem("Faixa A", "/tmp/a.mp3", ("artista ausente",))
-        aplicativo = self._revisao([item])
-        aplicativo._metadata_review_window = None
-
-        aplicativo.resolve(
-            MetadataPendingItem("Outra", "/tmp/outra.mp3", ("artista ausente",)))
-
-        assert list(aplicativo._metadata_review_rows) == [item]
+        assert app_window._downloads_dir.is_dir()
+        assert chamadas == [["xdg-open", str(app_window._downloads_dir)]]
 
 
 class TestColarNoCampoDeLink:
-    """Colar sobre uma selecao troca o trecho — o Tk no X11 nao faz isso sozinho."""
+    def test_deve_substituir_o_trecho_selecionado_pelo_link_colado(self, app_window):
+        app_window.url_entry.setText("https://youtu.be/AAA")
+        app_window.url_entry.selectAll()
+        QGuiApplication.clipboard().setText("https://youtu.be/BBB")
 
-    class _EntradaFalsa:
-        def __init__(self, texto="", selecao=None):
-            self.texto = texto
-            self.selecao = selecao
-            self.cursor = len(texto)
+        app_window.url_entry.paste()
 
-        def select_present(self):
-            return self.selecao is not None
+        assert app_window.url_entry.text() == "https://youtu.be/BBB"
 
-        def delete(self, _primeiro, _ultimo=None):
-            inicio, fim = self.selecao
-            self.texto = self.texto[:inicio] + self.texto[fim:]
-            self.cursor = inicio
-            self.selecao = None
+    def test_botao_colar_deve_trocar_o_campo_inteiro(self, app_window):
+        app_window.url_entry.setText("https://youtu.be/AAA")
+        QGuiApplication.clipboard().setText("  https://youtu.be/BBB  ")
 
-        def insert(self, _indice, texto):
-            self.texto = self.texto[:self.cursor] + texto + self.texto[self.cursor:]
-            self.cursor += len(texto)
+        app_window._paste_url()
 
-    class _RaizFalsa:
-        def __init__(self, area_de_transferencia):
-            self._conteudo = area_de_transferencia
+        assert app_window.url_entry.text() == "https://youtu.be/BBB"
 
-        def clipboard_get(self):
-            if self._conteudo is None:
-                raise window.tk.TclError("selection doesn't exist")
-            return self._conteudo
 
-    def _aplicativo(self, entrada, area_de_transferencia):
-        aplicativo = object.__new__(MediaDownloaderApp)
-        aplicativo.url_entry = entrada
-        aplicativo.root = self._RaizFalsa(area_de_transferencia)
-        return aplicativo
+class TestPreviaDoLinkAtual:
+    def _previa(self, url, duracao=300.0, playlist=False):
+        return MediaPreview(url=url, title="Video", duration=None if playlist else duracao,
+                            is_playlist=playlist, heights=(720, 360))
 
-    def test_deve_substituir_o_trecho_selecionado_pelo_link_colado(self):
-        entrada = self._EntradaFalsa("https://youtu.be/AAA", selecao=(0, 20))
-        aplicativo = self._aplicativo(entrada, "https://youtu.be/BBB")
+    def test_deve_ignorar_a_previa_de_um_link_que_ja_foi_trocado(self, app_window):
+        app_window.url_entry.setText("https://youtu.be/novo")
 
-        resultado = aplicativo._paste_over_selection()
+        app_window._handle({"type": "preview", "url": "https://youtu.be/antigo",
+                            "preview": self._previa("https://youtu.be/antigo")})
 
-        assert entrada.texto == "https://youtu.be/BBB"
-        assert resultado == "break"
+        assert app_window._preview is None
 
-    def test_deve_inserir_no_cursor_quando_nao_ha_selecao(self):
-        entrada = self._EntradaFalsa("https://youtu.be/", selecao=None)
-        aplicativo = self._aplicativo(entrada, "AAA")
+    def test_deve_usar_a_duracao_da_previa_na_regua_do_trecho(self, app_window):
+        url = "https://youtu.be/atual"
+        app_window.url_entry.setText(url)
 
-        aplicativo._paste_over_selection()
+        app_window._handle({"type": "preview", "url": url, "preview": self._previa(url, 245)})
 
-        assert entrada.texto == "https://youtu.be/AAA"
+        assert app_window.clip_slider.maximum() == 245
 
-    def test_deve_manter_o_campo_intacto_quando_a_area_de_transferencia_esta_vazia(self):
-        entrada = self._EntradaFalsa("https://youtu.be/AAA", selecao=(0, 20))
-        aplicativo = self._aplicativo(entrada, None)
+    def test_nao_deve_oferecer_qualidade_acima_da_que_o_video_tem(self, app_window):
+        url = "https://youtu.be/atual"
+        app_window.url_entry.setText(url)
 
-        aplicativo._paste_over_selection()
+        app_window._handle({"type": "preview", "url": url, "preview": self._previa(url)})
 
-        assert entrada.texto == "https://youtu.be/AAA"
+        assert not app_window._quality_buttons["1080"].isEnabled()
+        assert app_window._quality_buttons["720"].isEnabled()
+
+    def test_playlist_deve_desligar_o_trecho(self, app_window):
+        url = "https://www.youtube.com/playlist?list=PL"
+        app_window.url_entry.setText(url)
+        app_window.clip_switch.setChecked(True)
+
+        app_window._handle({"type": "preview", "url": url,
+                            "preview": self._previa(url, playlist=True)})
+
+        assert not app_window.clip_switch.isChecked()
+        assert not app_window.clip_switch.isEnabled()
+
+    def test_trecho_invalido_deve_bloquear_o_botao_baixar(self, app_window):
+        url = "https://youtu.be/atual"
+        app_window.url_entry.setText(url)
+        app_window._handle({"type": "preview", "url": url, "preview": self._previa(url, 300)})
+        app_window.clip_switch.setChecked(True)
+
+        app_window.clip_start.setText("2:00")
+        app_window.clip_end.setText("1:00")
+        app_window._times_edited("")
+
+        assert not app_window.download_btn.isEnabled()
+        assert "depois do início" in app_window._clip_error.text()
+
+    def test_trecho_escolhido_deve_ir_nas_opcoes_do_download(self, app_window):
+        url = "https://youtu.be/atual"
+        app_window.url_entry.setText(url)
+        app_window._handle({"type": "preview", "url": url, "preview": self._previa(url, 300)})
+        app_window.clip_switch.setChecked(True)
+        app_window.clip_start.setText("1:00")
+        app_window.clip_end.setText("1:30")
+
+        opcoes = app_window._media_options()
+
+        assert (opcoes.clip_start, opcoes.clip_end) == (60, 90)
+
+    def test_fim_igual_a_duracao_deve_ir_ate_o_final(self, app_window):
+        url = "https://youtu.be/atual"
+        app_window.url_entry.setText(url)
+        app_window._handle({"type": "preview", "url": url, "preview": self._previa(url, 300)})
+        app_window.clip_switch.setChecked(True)
+        app_window.clip_start.setText("1:00")
+        app_window.clip_end.setText("5:00")
+
+        assert app_window._media_options().clip_end is None
+
+
+class TestEncerramentoDaRevisaoDeMetadata:
+    def _revisao(self, qapp, pendentes):
+        revisao = MetadataReview(QWidget(), SimpleNamespace())
+        revisao._metadata_review_window = QWidget()
+        revisao._metadata_review_window.show()
+        revisao._metadata_review_rows = {
+            item: (QWidget(), None, None, None) for item in pendentes
+        }
+        return revisao
+
+    def test_deve_fechar_a_revisao_quando_a_ultima_pendencia_foi_importada(self, qapp):
+        item = MetadataPendingItem("Paramore - All I Wanted", "/tmp/faixa.mp3",
+                                   ("artista provisorio: canal Paramore",))
+        revisao = self._revisao(qapp, [item])
+        janela = revisao._metadata_review_window
+
+        revisao.resolve(item)
+
+        assert not janela.isVisible()
+        assert revisao._metadata_review_rows == {}
+        assert revisao._metadata_review_window is None
+
+    def test_deve_manter_a_revisao_aberta_enquanto_houver_outra_pendencia(self, qapp):
+        importado = MetadataPendingItem("Faixa A", "/tmp/a.mp3", ("artista ausente",))
+        restante = MetadataPendingItem("Faixa B", "/tmp/b.mp3", ("artista ausente",))
+        revisao = self._revisao(qapp, [importado, restante])
+        janela = revisao._metadata_review_window
+
+        revisao.resolve(importado)
+
+        assert janela.isVisible()
+        assert list(revisao._metadata_review_rows) == [restante]
+
+    def test_deve_ignorar_item_que_nao_esta_na_revisao(self, qapp):
+        item = MetadataPendingItem("Faixa A", "/tmp/a.mp3", ("artista ausente",))
+        revisao = self._revisao(qapp, [item])
+
+        revisao.resolve(MetadataPendingItem("Outra", "/tmp/outra.mp3", ("artista ausente",)))
+
+        assert list(revisao._metadata_review_rows) == [item]
 
 
 class TestFilaDeBuscaDeMetadata:
-    """Em playlist a pessoa clica em vários; recusar o segundo clique é ruim."""
+    def _revisao(self, qapp, pendentes):
+        from PySide6.QtWidgets import QPushButton
 
-    class _BotaoFalso:
-        def __init__(self):
-            self.texto = "Buscar metadata"
-            self.estado = "normal"
-            self.destruido = False
-
-        def winfo_exists(self):
-            return not self.destruido
-
-        def configure(self, **kwargs):
-            self.texto = kwargs.get("text", self.texto)
-            self.estado = kwargs.get("state", self.estado)
-
-        def destroy(self):
-            self.destruido = True
-
-    def _revisao(self, pendentes):
-        from collections import deque
-        from types import SimpleNamespace
-
-        revisao = object.__new__(MetadataReview)
-        # O alvo nunca e chamado: `_spawn` esta trocado. So precisa existir,
-        # como existiria o gerente de verdade.
-        revisao._manager = SimpleNamespace(search_metadata="alvo")
+        revisao = MetadataReview(QWidget(), SimpleNamespace(search_metadata="alvo"))
         revisao._metadata_review_rows = {
-            item: (None, None, None, self._BotaoFalso()) for item in pendentes
+            item: (None, None, None, QPushButton("Buscar metadata")) for item in pendentes
         }
         revisao._search_queue = deque()
-        revisao._searching = None
         revisao.iniciadas = []
         revisao._spawn = lambda alvo, *args: revisao.iniciadas.append(args[0])
         return revisao
 
     def _itens(self, quantidade):
-        return [
-            MetadataPendingItem(f"Faixa {n}", f"/tmp/{n}.mp3", ("artista ausente",))
-            for n in range(quantidade)
-        ]
+        return [MetadataPendingItem(f"Faixa {n}", f"/tmp/{n}.mp3", ("artista ausente",))
+                for n in range(quantidade)]
 
     def _botao(self, revisao, item):
         return revisao._metadata_review_rows[item][3]
 
-    def test_deve_iniciar_a_primeira_busca_de_imediato(self):
+    def test_deve_iniciar_a_primeira_busca_de_imediato(self, qapp):
         um, = self._itens(1)
-        revisao = self._revisao([um])
+        revisao = self._revisao(qapp, [um])
 
         revisao.start_search(um)
 
         assert revisao.iniciadas == [um]
-        assert self._botao(revisao, um).estado == "disabled"
+        assert not self._botao(revisao, um).isEnabled()
 
-    def test_deve_enfileirar_o_segundo_clique_em_vez_de_recusar(self):
+    def test_deve_enfileirar_o_segundo_clique_em_vez_de_recusar(self, qapp):
         um, dois = self._itens(2)
-        revisao = self._revisao([um, dois])
+        revisao = self._revisao(qapp, [um, dois])
 
         revisao.start_search(um)
         revisao.start_search(dois)
 
         assert revisao.iniciadas == [um], "só uma busca corre por vez"
-        assert "fila" in self._botao(revisao, dois).texto.lower()
+        assert "fila" in self._botao(revisao, dois).text().lower()
 
-    def test_deve_iniciar_a_proxima_quando_a_anterior_termina(self):
+    def test_deve_iniciar_a_proxima_quando_a_anterior_termina(self, qapp):
         um, dois = self._itens(2)
-        revisao = self._revisao([um, dois])
+        revisao = self._revisao(qapp, [um, dois])
         revisao.start_search(um)
         revisao.start_search(dois)
 
         revisao.search_finished(um)
 
         assert revisao.iniciadas == [um, dois]
-        assert self._botao(revisao, um).estado == "normal"
+        assert self._botao(revisao, um).isEnabled()
 
-    def test_deve_ignorar_clique_repetido_no_mesmo_item(self):
+    def test_deve_ignorar_clique_repetido_no_mesmo_item(self, qapp):
         um, = self._itens(1)
-        revisao = self._revisao([um])
+        revisao = self._revisao(qapp, [um])
 
         revisao.start_search(um)
         revisao.start_search(um)
 
         assert revisao.iniciadas == [um]
-
-    def test_deve_seguir_a_fila_quando_a_busca_anterior_falha(self):
-        um, dois = self._itens(2)
-        revisao = self._revisao([um, dois])
-        revisao.start_search(um)
-        revisao.start_search(dois)
-
-        revisao.search_finished(um)   # o erro chega pelo mesmo caminho
-
-        assert revisao.iniciadas == [um, dois]

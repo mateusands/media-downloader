@@ -4,16 +4,20 @@ import queue
 import re
 import shutil
 import threading
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
+from yt_dlp.postprocessor import MoveFilesAfterDownloadPP
 from yt_dlp.postprocessor.metadataparser import MetadataParserPP
-from yt_dlp.utils import DownloadCancelled
+from yt_dlp.utils import DownloadCancelled, download_range_func
 
+from .clip import clip_label, is_precise
 from .config import DOWNLOAD_FOLDERS
+from .history import HistoryEntry, append_history
 from .library import crop_cover_to_square, music_files, read_local_item
 from .metadata import (
     MusicMetadataService,
@@ -26,10 +30,12 @@ from .metadata import (
 )
 from .models import (
     DownloadSummary,
+    MediaOptions,
     MetadataPendingItem,
     MusicMetadataCandidate,
     PlaylistEntry,
 )
+from .preview import fetch_thumbnail, preview_from_info, thumbnail_url
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
@@ -105,6 +111,44 @@ def js_runtimes_for(which: Callable[[str], str | None]) -> dict[str, dict[str, s
     return {"deno": {}}
 
 
+_BEST_VIDEO = "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b"
+VIDEO_QUALITIES = ("best", "1080", "720", "480", "360")
+
+# Patrocinio, autopromocao, pedido de inscricao e o trecho sem musica de um
+# clipe: o que a pessoa pularia na mao.
+SPONSOR_CATEGORIES = ("sponsor", "selfpromo", "interaction", "music_offtopic")
+_SUBTITLE_LANGS = ["pt.*", "en.*"]
+_SUBTITLE_EXTS = {"vtt", "srt", "ass", "ssa", "ttml", "srv1", "srv2", "srv3", "json3", "lrc"}
+_MOVE_FILES = MoveFilesAfterDownloadPP.pp_key()
+
+
+def _is_subtitle_download(info_dict: dict[str, Any]) -> bool:
+    """Legenda passa pelo gancho como download a parte, com o dicionario da legenda."""
+    return not info_dict.get("id") and info_dict.get("ext") in _SUBTITLE_EXTS
+
+
+def video_format(quality: str) -> str:
+    """Altura como teto: sem nada abaixo dela, baixa o que houver em vez de falhar."""
+    if quality not in VIDEO_QUALITIES or quality == "best":
+        return _BEST_VIDEO
+    cap = f"[height<={quality}]"
+    return f"bv*{cap}[ext=mp4]+ba[ext=m4a]/bv*{cap}+ba/b{cap}/b"
+
+
+def transfer_text(speed: float | None, eta: float | None) -> str:
+    """'4.2 MB/s · faltam 0:12' — so o que o yt-dlp informou."""
+    if not speed:
+        return ""
+    if speed >= 1024 * 1024:
+        text = f"{speed / (1024 * 1024):.1f} MB/s"
+    else:
+        text = f"{speed / 1024:.0f} KB/s"
+    if eta:
+        minutes, seconds = divmod(int(eta), 60)
+        text += f" · faltam {minutes}:{seconds:02d}"
+    return text
+
+
 def _retry_sleep(attempt: int) -> float:
     return min(2 ** attempt, 30)
 
@@ -170,6 +214,7 @@ class _PlaylistListing:
     auto_metadata: bool
     target_dir: Path
     entries: tuple[PlaylistEntry, ...]
+    options: MediaOptions = field(default_factory=MediaOptions)
 
 
 def _source_artist(info: dict[str, Any]) -> str | None:
@@ -178,6 +223,15 @@ def _source_artist(info: dict[str, Any]) -> str | None:
         return info["artist"]
     artists = info.get("artists") or []
     return artists[0] if artists else None
+
+
+class _SilentLogger:
+    """A previa nao relata nada: o download, se vier, relata por ela."""
+
+    def debug(self, _: str) -> None:
+        pass
+
+    warning = error = debug
 
 
 class ReportingLogger:
@@ -231,6 +285,7 @@ class DownloadManager:
         self._downloads_dir: Path | None = None
         self._listing: _PlaylistListing | None = None
         self._finished_files: list[tuple[str, Path]] = []
+        self._history_path: Path | None = None
 
     def cancel(self) -> None:
         """Pede a interrupcao; o yt-dlp para no proximo aviso de progresso."""
@@ -296,6 +351,38 @@ class DownloadManager:
             )
         except Exception:
             self._emit("metadata_cover_unavailable", candidate=candidate)
+
+    def set_history_path(self, path: Path) -> None:
+        """Sem chamar isto, nada vai para o historico — testes nao sujam a configuracao."""
+        self._history_path = path
+
+    def probe(self, url: str) -> None:
+        """Previa do link. Falha aqui nao e erro de download: so nao ha previa."""
+        try:
+            playlist_mode = self._url_is_playlist(url)
+            opts = {
+                **self._base_opts(),
+                "skip_download": True,
+                "extract_flat": "in_playlist",
+                "noplaylist": not playlist_mode,
+                "no_warnings": True,
+                "logger": _SilentLogger(),
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            if not info:
+                raise ValueError("Nao foi possivel ler o link.")
+            preview = preview_from_info(url, info)
+        except Exception as exc:
+            self._emit("preview_failed", url=url, message=str(exc))
+            return
+        thumbnail = None
+        if image_url := thumbnail_url(info):
+            try:
+                thumbnail = fetch_thumbnail(image_url)
+            except Exception:
+                thumbnail = None
+        self._emit("preview", url=url, preview=replace(preview, thumbnail=thumbnail))
 
     def set_downloads_dir(self, base: Path) -> None:
         """Base escolhida pela pessoa; as subpastas por tipo continuam as mesmas."""
@@ -375,8 +462,10 @@ class DownloadManager:
     def download(
         self, url: str, file_format: str,
         include_metadata: bool = False, auto_metadata: bool = False,
+        options: MediaOptions | None = None,
     ) -> None:
         """Item unico baixa direto; playlist lista e espera `download_selected`."""
+        options = options or MediaOptions()
         self._reset_cancel()
         self._listing = None
         try:
@@ -394,9 +483,11 @@ class DownloadManager:
             target_dir = self._ensure_output_dir(file_format, playlist_mode)
             if playlist_mode:
                 entries = playlist_entries(info, archive_ids(target_dir / ARCHIVE_FILENAME))
+                # Trecho nao vale em playlist: cada item tem duracao propria.
                 self._listing = _PlaylistListing(
                     url, file_format, include_metadata, auto_metadata,
                     target_dir, tuple(entries),
+                    replace(options, clip_start=None, clip_end=None),
                 )
                 self._emit(
                     "playlist_listed",
@@ -410,7 +501,7 @@ class DownloadManager:
 
         self._run(
             url, file_format, include_metadata, auto_metadata,
-            DownloadSummary(target_dir=str(target_dir), total_items=1),
+            DownloadSummary(target_dir=str(target_dir), total_items=1), options=options,
         )
 
     def download_selected(self, indices: list[int]) -> None:
@@ -444,6 +535,7 @@ class DownloadManager:
         self._run(
             listing.url, listing.file_format, listing.include_metadata,
             listing.auto_metadata, summary, playlist_items=playlist_items_spec(indices),
+            options=listing.options,
         )
 
     def discard_listing(self) -> None:
@@ -452,7 +544,9 @@ class DownloadManager:
     def _run(
         self, url: str, file_format: str, include_metadata: bool, auto_metadata: bool,
         summary: DownloadSummary, playlist_items: str | None = None,
+        options: MediaOptions | None = None,
     ) -> None:
+        options = options or MediaOptions()
         try:
             label = "colecao" if summary.playlist_mode else "midia"
             self._emit("status", message=f"Preparando download ({label})...")
@@ -465,7 +559,7 @@ class DownloadManager:
 
             opts = self._build_opts(
                 Path(summary.target_dir), file_format, summary.playlist_mode,
-                summary, include_metadata,
+                summary, include_metadata, options=options,
             )
             if playlist_items:
                 opts["playlist_items"] = playlist_items
@@ -474,7 +568,12 @@ class DownloadManager:
                 ydl.download([url])
 
             if file_format == "mp3":
-                self._rename_downloads(summary, self._finished_files)
+                clip = None if summary.playlist_mode or not options.is_clip else clip_label(
+                    options.clip_start, options.clip_end)
+                self._finished_files = self._rename_downloads(
+                    summary, self._finished_files, clip)
+            summary.finished_files = [str(path) for _, path in self._finished_files]
+            self._record_history(file_format)
             if include_metadata and auto_metadata:
                 self._auto_apply_metadata(summary)
             if self._cancel.is_set():
@@ -489,7 +588,9 @@ class DownloadManager:
 
     def _record_final_file(self, data: dict[str, Any]) -> None:
         """Guarda onde cada arquivo terminou, depois de convertido e movido."""
-        if data.get("status") != "finished" or data.get("postprocessor") != "MoveFilesAfterDownload":
+        # O nome publicado e o `pp_key()` ("MoveFiles"), nao o da classe: comparado
+        # com "MoveFilesAfterDownload", nenhum arquivo era registrado.
+        if data.get("status") != "finished" or data.get("postprocessor") != _MOVE_FILES:
             return
         info = data.get("info_dict") or {}
         if info.get("filepath"):
@@ -499,18 +600,42 @@ class DownloadManager:
 
     def _rename_downloads(
         self, summary: DownloadSummary, files: list[tuple[str, Path]],
-    ) -> None:
-        """Da a cada MP3 o nome da musica e leva as pendencias junto."""
+        clip: str | None = None,
+    ) -> list[tuple[str, Path]]:
+        """Da a cada MP3 o nome da musica e leva as pendencias junto.
+
+        O trecho mantem o sufixo: com so o nome da musica, ele tomaria o lugar
+        do MP3 inteiro da mesma faixa.
+        """
         moved: dict[str, str] = {}
+        renamed = []
         for title, path in files:
+            name = song_title(title or path.stem)
             try:
-                moved[str(path)] = str(rename_to_song(path, song_title(title or path.stem)))
+                final = rename_to_song(path, f"{name} ({clip})" if clip else name)
             except OSError:
-                continue
+                final = path
+            moved[str(path)] = str(final)
+            renamed.append((title, final))
         summary.metadata_pending_items = [
             replace(item, file_path=moved.get(item.file_path, item.file_path))
             for item in summary.metadata_pending_items
         ]
+        return renamed
+
+    def _record_history(self, file_format: str) -> None:
+        if self._history_path is None or not self._finished_files:
+            return
+        now = datetime.now().isoformat(timespec="seconds")
+        try:
+            append_history(self._history_path, [
+                HistoryEntry(title=title or path.stem, path=str(path),
+                             kind=file_format, finished_at=now)
+                for title, path in self._finished_files
+            ])
+        except OSError:
+            # Historico e conveniencia: o arquivo ja esta na pasta.
+            pass
 
     def _auto_apply_metadata(self, summary: DownloadSummary) -> None:
         """Aplica o candidato seguro de cada pendencia; o resto segue para a revisao."""
@@ -577,9 +702,17 @@ class DownloadManager:
         playlist_mode: bool,
         summary: DownloadSummary,
         include_metadata: bool = False,
+        options: MediaOptions | None = None,
     ) -> dict[str, Any]:
+        options = options or MediaOptions()
+        clip = options.is_clip and not playlist_mode
         if playlist_mode:
             outtmpl = str(target_dir / "%(playlist_title,playlist|Playlist)s" / "%(title)s.%(ext)s")
+        elif clip:
+            # Nome proprio: com o do arquivo inteiro, o `final_ext` acharia o
+            # MP3 completo e nao baixaria o trecho.
+            label = clip_label(options.clip_start, options.clip_end)
+            outtmpl = str(target_dir / f"%(title)s ({label}).%(ext)s")
         else:
             outtmpl = str(target_dir / "%(title)s.%(ext)s")
 
@@ -610,12 +743,39 @@ class DownloadManager:
                 "max_sleep_interval": 5,
             })
 
+        if clip:
+            start = options.clip_start or 0.0
+            stop = float("inf") if options.clip_end is None else options.clip_end
+            opts["download_ranges"] = download_range_func(None, [(start, stop)])
+            if is_precise(options.clip_start, options.clip_end):
+                opts["force_keyframes_at_cuts"] = True
+
+        # Segmentos do SponsorBlock vem na linha do tempo do video inteiro;
+        # aplicados a um trecho, cortariam o lugar errado.
+        sponsors = options.skip_sponsors and not clip
+        sponsor_pps = [{
+            "key": "SponsorBlock",
+            "categories": list(SPONSOR_CATEGORIES),
+            "api": "https://sponsor.ajay.app",
+            "when": "after_filter",
+        }] if sponsors else []
+        # Antes de gravar metadados: os capitulos gravados tem de ser os do
+        # arquivo ja sem os segmentos.
+        remove_pps = [{
+            "key": "ModifyChapters",
+            "remove_sponsor_segments": list(SPONSOR_CATEGORIES),
+            "remove_chapters_patterns": [],
+            "remove_ranges": [],
+            "sponsorblock_chapter_title": "[SponsorBlock]: %(category_names)l",
+            "force_keyframes": False,
+        }] if sponsors else []
+
         if file_format == "mp3":
-            postprocessors = [{
+            postprocessors = [*sponsor_pps, {
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
-            }]
+            }, *remove_pps]
             if include_metadata and playlist_mode:
                 postprocessors.append({
                     "key": "MetadataParser",
@@ -637,10 +797,25 @@ class DownloadManager:
             if include_metadata:
                 opts["writethumbnail"] = True
         else:
+            postprocessors = [*sponsor_pps, *remove_pps]
+            if options.subtitles:
+                opts.update({
+                    "writesubtitles": True,
+                    "writeautomaticsub": True,
+                    "subtitleslangs": list(_SUBTITLE_LANGS),
+                })
+                # False apaga o .vtt depois de embutir: nao sobra solto na pasta.
+                postprocessors.append(
+                    {"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False})
+            if options.chapters:
+                postprocessors.append(
+                    {"key": "FFmpegMetadata", "add_chapters": True, "add_metadata": False})
             opts.update({
-                "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+                "format": video_format(options.quality),
                 "merge_output_format": "mp4",
             })
+            if postprocessors:
+                opts["postprocessors"] = postprocessors
 
         return opts
 
@@ -653,6 +828,8 @@ class DownloadManager:
                 raise DownloadCancelled("Download cancelado.")
             status = data.get("status")
             info_dict = data.get("info_dict") or {}
+            if _is_subtitle_download(info_dict):
+                return
             title = info_dict.get("title") or data.get("filename") or "Arquivo"
 
             if status == "downloading":
@@ -670,7 +847,8 @@ class DownloadManager:
                 current = min(summary.downloaded_count + 1, summary.total_items)
                 suffix = f" ({current}/{summary.total_items})" if summary.total_items > 1 else ""
                 self._emit("progress", progress=max(0.0, min(overall, 100.0)),
-                           message=f"Baixando: {title}{suffix}")
+                           message=f"Baixando: {title}{suffix}",
+                           speed=data.get("speed"), eta=data.get("eta"))
 
             elif status == "finished":
                 uid = info_dict.get("id") or data.get("filename") or title

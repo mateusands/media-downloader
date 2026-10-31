@@ -24,6 +24,15 @@ REGRA DE NEGÓCIO
   - Parênteses que mudam a música (ao vivo, remix, acústico) ficam no nome.
   - Dois arquivos com o mesmo nome não se sobrescrevem: o segundo ganha " (2)".
   - Vídeo em MP4 mantém o título da origem: o arquivo é o vídeo, não a faixa.
+
+ONDE O ARQUIVO TERMINA
+  O caminho final vem do gancho de pós-processamento, no aviso de "terminado"
+  do pós-processador que move o arquivo para a pasta. O nome desse
+  pós-processador é o que o yt-dlp publica (`MoveFilesAfterDownloadPP.pp_key()`,
+  que vale "MoveFiles"), e não o nome da classe. O código comparava com
+  "MoveFilesAfterDownload": nenhum arquivo era registrado, o MP3 real nunca
+  ganhava o nome da música — e os testes passavam porque o dublê do yt-dlp
+  usava o mesmo nome errado. O teste abaixo pergunta o nome ao próprio yt-dlp.
 """
 
 import queue
@@ -174,6 +183,28 @@ class TestNomeAoFimDoDownload:
         DownloadManager(queue.Queue(), _CatalogoFalso())._rename_downloads(
             resumo, [("Faixa", tmp_path / "nao-existe.mp3")])
         assert resumo.failed_items == []
+
+
+class TestCaminhoFinalDoArquivo:
+    def _aviso(self, caminho, status="finished"):
+        from yt_dlp.postprocessor import MoveFilesAfterDownloadPP
+
+        return {"status": status, "postprocessor": MoveFilesAfterDownloadPP.pp_key(),
+                "info_dict": {"title": "Faixa", "filepath": caminho}}
+
+    def test_deve_registrar_o_arquivo_com_o_nome_que_o_yt_dlp_publica(self):
+        manager = DownloadManager(queue.Queue())
+
+        manager._record_final_file(self._aviso("/musicas/Faixa.mp3"))
+
+        assert manager._finished_files == [("Faixa", Path("/musicas/Faixa.mp3"))]
+
+    def test_nao_deve_registrar_antes_de_terminar_de_mover(self):
+        manager = DownloadManager(queue.Queue())
+
+        manager._record_final_file(self._aviso("/musicas/Faixa.mp3", status="started"))
+
+        assert manager._finished_files == []
 
 
 class TestSemNumeroNaFrente:

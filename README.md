@@ -1,10 +1,20 @@
 # Media Downloader
 
-Desktop application with a graphical interface (CustomTkinter) for downloading video and audio from platforms compatible with yt-dlp.
+Desktop application with a dark graphical interface (PySide6 / Qt 6) for downloading video and audio from platforms compatible with yt-dlp.
 
 ## Features
 
-- Download videos in MP4 (best available quality)
+- **Link preview** — paste (or drag) a link and see the thumbnail, title, channel, duration and available
+  resolutions before downloading; a link copied before switching to the window is filled in automatically
+- **Download only a section** — "from minute X to minute Y", with a two-handle ruler or typed times
+  (`1:30`, `90`, `1:02:03`). Sections up to 3 minutes are cut on the exact frame; longer ones are cut on
+  the nearest keyframe so nothing is re-encoded. A `t=` in a YouTube link becomes the start
+- Download videos in MP4 with a quality cap (best, 1080p, 720p, 480p, 360p) — resolutions the video does
+  not have are not offered
+- Embedded subtitles (Portuguese and English, including automatic ones) and chapters in MP4
+- Skip sponsor segments with [SponsorBlock](https://sponsor.ajay.app/)
+- History page with the last downloaded files and shortcuts to open them
+- Speed and time remaining next to the progress bar
 - Extract audio as MP3 (192 kbps)
 - Option to add the cover art and metadata available on the platform to MP3 files
 - Guided search for artist, track, album, year, and cover art when an MP3 finishes with incomplete metadata
@@ -16,7 +26,6 @@ Desktop application with a graphical interface (CustomTkinter) for downloading v
 - Cancel button that preserves completed downloads
 - Real-time progress bar
 - Downloads automatically organized into separate folders
-- Modern, responsive graphical interface
 - Popular platform examples on the home screen and access to the current official list
 
 ## Supported platforms
@@ -33,8 +42,8 @@ System requirements:
 - **Python 3.10+** (developed and tested on 3.14)
 - **[FFmpeg](https://ffmpeg.org/)** — required. Converts audio to MP3 and merges video and audio into MP4;
   without it, the download appears to progress but fails during conversion.
-- **Tk** — Tkinter comes with Python on Windows and macOS, but on many Linux distributions it is a
-  separate package (`tk` on Arch, `python3-tk` on Debian and Ubuntu). Without it, the window will not open.
+- **On Linux with X11 only: `libxcb-cursor`** (`xcb-util-cursor` on Arch, `libxcb-cursor0` on Debian and
+  Ubuntu). Qt comes inside the PySide6 package, but its X11 plugin needs this library. Wayland does not.
 - **A JavaScript runtime** — [Deno](https://deno.com/) (preferred), Node, or Bun. Since yt-dlp 2025.11,
   YouTube requires one to make formats available; the app uses the first one it finds in `PATH`. Without
   one, YouTube provides few formats or none. `./run.sh --verificar` shows which runtime was selected.
@@ -44,9 +53,9 @@ Python dependencies, installed through `requirements.txt`:
 | Package | Purpose |
 |---|---|
 | `yt-dlp` | Downloading and extracting source metadata |
-| `customtkinter` | Dark mode interface widgets |
+| `PySide6` | The interface (Qt 6) |
 | `mutagen` | Reading and writing ID3 tags and cover art in MP3 files |
-| `pillow` | Resizing covers displayed during review — **the app will not open without it** |
+| `pillow` | Cropping video thumbnails into square covers — **the app will not open without it** |
 
 ## Installation
 
@@ -95,7 +104,8 @@ suite runs without opening a window or accessing the network:
   message does not state this clearly.
 - **`error: externally-managed-environment` during installation** — the command was run outside the
   virtual environment; see the installation section.
-- **`ModuleNotFoundError: No module named 'tkinter'`** — the Tk system package is missing.
+- **`qt.qpa.plugin: Could not load the Qt platform plugin "xcb"`** — on X11, install `libxcb-cursor`
+  (see Requirements).
 
 ## Project structure
 
@@ -105,11 +115,15 @@ media-downloader/
 │   ├── app.py                  # entry point
 │   └── media_downloader/
 │       ├── config.py           # paths, external services, and limits
-│       ├── theme.py            # palette and typography
+│       ├── theme.py            # palette, typography, and Qt stylesheet
 │       ├── models.py           # data passed through the queue
 │       ├── metadata.py         # iTunes catalog and file tags
+│       ├── clip.py             # section download: times, validation, naming
+│       ├── preview.py          # link preview
+│       ├── history.py          # download history
 │       ├── downloader.py       # downloads and failure reporting
-│       ├── widgets.py          # reusable widgets
+│       ├── icons.py            # SVG icons
+│       ├── widgets.py          # reusable widgets (ruler, switches, cards)
 │       ├── review.py           # metadata review
 │       ├── selection.py        # playlist item selection
 │       └── window.py           # main window

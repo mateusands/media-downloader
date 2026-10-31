@@ -79,7 +79,7 @@ fi
 
 # yt_dlp_ejs entra na checagem porque venvs antigos tem o yt-dlp sem o extra
 # [default], e sem ele o YouTube nao resolve a assinatura dos formatos.
-if ! "$PY" -c 'import customtkinter, yt_dlp, yt_dlp_ejs, mutagen, PIL' 2>/dev/null; then
+if ! "$PY" -c 'import PySide6.QtWidgets, PySide6.QtSvg, yt_dlp, yt_dlp_ejs, mutagen, PIL' 2>/dev/null; then
     instalar=1
 fi
 
@@ -97,13 +97,12 @@ if (( atualizar )); then
 fi
 
 # ── Requisitos de sistema ────────────────────────────────────────────────────
-# Tk nao vem junto do Python em varias distribuicoes; sem ele nao ha janela.
-if ! "$PY" -c 'import tkinter' 2>/dev/null; then
-    erro "Falta o Tk — o aplicativo nao abre sem ele."
-    erro "  Arch/CachyOS : sudo pacman -S tk"
-    erro "  Debian/Ubuntu: sudo apt install python3-tk"
-    erro "  Fedora       : sudo dnf install python3-tkinter"
-    exit 1
+# O Qt vem dentro da roda do PySide6, mas no X11 o plugin xcb precisa da
+# libxcb-cursor do sistema; sem ela a janela nao abre e o erro fala em "xcb".
+if [[ "${XDG_SESSION_TYPE:-}" != wayland ]] && ! ldconfig -p 2>/dev/null | grep -q libxcb-cursor; then
+    aviso "AVISO: libxcb-cursor nao encontrada — no X11 a janela pode nao abrir."
+    aviso "       Arch/CachyOS : sudo pacman -S xcb-util-cursor"
+    aviso "       Debian/Ubuntu: sudo apt install libxcb-cursor0"
 fi
 
 # FFmpeg e aviso, nao bloqueio: a janela abre e a falha so aparece na conversao,
@@ -117,6 +116,7 @@ fi
 if (( verificar )); then
     ok "Ambiente pronto."
     printf '  python  : %s\n' "$("$PY" --version)"
+    printf '  pyside6 : %s\n' "$("$PY" -c 'import PySide6; print(PySide6.__version__)')"
     printf '  yt-dlp  : %s\n' "$("$PY" -c 'import yt_dlp; print(yt_dlp.version.__version__)')"
     printf '  ffmpeg  : %s\n' "$(command -v ffmpeg >/dev/null && ffmpeg -version | head -1 | cut -d' ' -f3 || echo 'ausente')"
     printf '  js      : %s\n' "$(PYTHONPATH="$RAIZ/src" "$PY" -c 'import shutil; from media_downloader.downloader import js_runtimes_for; r = js_runtimes_for(shutil.which); n = next(iter(r)); print(n, r[n].get("path", "(nao instalado: YouTube com poucos formatos)"))')"

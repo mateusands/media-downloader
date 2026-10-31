@@ -19,6 +19,37 @@ class DownloadSummary:
     total_items: int = 0
     target_dir: str = ""
     playlist_mode: bool = False
+    # Caminhos finais — depois da conversao, do nome da musica e do sufixo de trecho.
+    finished_files: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MediaOptions:
+    """O que a pessoa escolheu alem do formato. Trecho so vale fora de playlist."""
+    quality: str = "best"
+    clip_start: float | None = None
+    clip_end: float | None = None
+    subtitles: bool = False
+    chapters: bool = False
+    skip_sponsors: bool = False
+
+    @property
+    def is_clip(self) -> bool:
+        return self.clip_end is not None or bool(self.clip_start)
+
+
+@dataclass(frozen=True)
+class MediaPreview:
+    """O que o link e, antes de baixar: alimenta a regua do trecho e as qualidades."""
+    url: str
+    title: str
+    uploader: str | None = None
+    duration: float | None = None
+    is_playlist: bool = False
+    item_count: int = 0
+    heights: tuple[int, ...] = ()
+    start_hint: float | None = None
+    thumbnail: bytes | None = None
 
 
 @dataclass(frozen=True)

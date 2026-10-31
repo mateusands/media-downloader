@@ -2,8 +2,11 @@
 
 ## Project purpose
 
-Python desktop application with a dark mode interface (CustomTkinter) for downloading video or audio from
-platforms compatible with yt-dlp. Accepts HTTP/HTTPS links and leaves support checks to yt-dlp; preserves
+Python desktop application with a dark mode interface (PySide6 / Qt 6) for downloading video or audio from
+platforms compatible with yt-dlp. Pasting a link shows a preview (thumbnail, title, channel, duration,
+available resolutions); the user picks MP3 or MP4, a quality cap, and optionally **only a section** of the
+media ("Baixar só um trecho", start/end with a two-handle ruler), embedded subtitles, chapters, and
+SponsorBlock removal. A history page lists the last downloaded files. Accepts HTTP/HTTPS links and leaves support checks to yt-dlp; preserves
 explicit YouTube playlist detection to avoid downloading an entire collection when the user supplied a
 single-video link. For playlists, it lists items and lets users choose what to download, remembering
 previous downloads. Organizes downloads into folders by type, shows real-time progress, allows cancellation,
@@ -19,6 +22,11 @@ Portfolio project.
 **The actual system state is the code.** It lives in `src/media_downloader/`, with one module per layer
 (see below). Read the relevant module before making changes — not the entire package.
 
+**How it looks lives in `DESIGN.md`** (tokens, measured contrast, components, do and don't). Read it
+before touching a screen; a token change and its `DESIGN.md` line change together. Every colour comes
+from `theme.py` — `test_contraste.py` fails on a hex literal in a UI module and measures text (4.5:1)
+and state indicators (3:1).
+
 ---
 
 ## Stack
@@ -26,9 +34,10 @@ Portfolio project.
 - **Python 3.10+** (the local environment uses 3.14)
 - **yt-dlp** — downloading and metadata extraction
 - **mutagen** — reading and writing ID3 tags and cover art in MP3 files
-- **Pillow** — resizes covers displayed during metadata review. Imported at the top of `app.py`:
-  without it, the application **will not open**, even if nobody uses the metadata option.
-- **CustomTkinter** — dark mode widgets built on Tkinter
+- **Pillow** — crops 16:9 thumbnails into square covers (`library.py`). `downloader` imports `library`,
+  so without Pillow the application **will not open**, even if nobody uses the metadata option.
+- **PySide6 (Qt 6)** — the interface. Styled with QSS generated in `theme.py`, `Fusion` style (the
+  native style ignores part of the QSS), icons drawn as inline SVG in `icons.py` (no icon package).
 - **FFmpeg** (system binary) — required for MP3 and for merging video+audio into MP4
 - **pytest** — pure backend logic tests, without opening a window
 
@@ -48,11 +57,15 @@ media-downloader/
 │       ├── metadata.py     # iTunes catalog and file tags
 │       ├── library.py      # MP3 files already on disk become items awaiting metadata
 │       ├── settings.py     # saved preferences (destination folder) in ~/.config/media-downloader
+│       ├── clip.py         # section download: time parsing, validation, filename label (pure)
+│       ├── preview.py      # link preview from yt-dlp info: heights, start hint, thumbnail (pure + fetch)
+│       ├── history.py      # last downloaded files in ~/.config/media-downloader/historico.json
 │       ├── downloader.py   # ReportingLogger and DownloadManager
-│       ├── widgets.py      # FormatCard and HoverButton
+│       ├── icons.py        # stroke icons as inline SVG, colored at render time
+│       ├── widgets.py      # FormatCard, ToggleSwitch, OptionRow, RangeSlider, PreviewCard
 │       ├── review.py       # MetadataReview — metadata review dialogs
 │       ├── selection.py    # PlaylistChoice (state) and PlaylistSelection (dialog)
-│       └── window.py       # MediaDownloaderApp
+│       └── window.py       # MediaDownloaderApp (QMainWindow: sidebar, download page, history)
 ├── assets/                 # master SVG icon, UI PNG, and Windows ICO
 └── tests/
     ├── test_url.py              # URL validation and classification
@@ -66,8 +79,15 @@ media-downloader/
     ├── test_pasta_de_destino.py # choosing and remembering the destination folder
     ├── test_capa_e_creditos.py  # long credits, "(Album Version)", unresponsive catalog, cropping
     ├── test_selecao.py          # playlist item selection state
-    ├── test_contraste.py        # palette AA contrast
-    └── test_ui_controls.py      # activating controls and review dialogs
+    ├── test_contraste.py        # AA contrast (text 4.5:1, indicators 3:1) and no colour literal in UI code
+    ├── test_recorte_do_trecho.py # section download: parsing, validation, download_ranges, naming
+    ├── test_opcoes_de_video.py  # quality cap, subtitles, chapters, SponsorBlock, options in playlists
+    ├── test_previa_do_link.py   # link preview and available heights
+    ├── test_historico_de_downloads.py # history file and what a download records
+    ├── test_progresso.py        # speed and ETA in progress events
+    ├── test_regua_do_trecho.py  # RangeSlider (two-handle ruler)
+    ├── conftest.py              # offscreen Qt app; isolates config and history from the user's
+    └── test_ui_controls.py      # activating controls, preview of the current link, review dialogs
 ```
 
 **Module dependencies flow in only one direction:** `window` and `widgets` import from the backend;
@@ -105,7 +125,12 @@ Each layer is a module, and they **must not be mixed**:
 **Has no knowledge of the UI.** Does not import widgets, call `messagebox`, or touch `root`. Communicates
 exclusively through a `queue.Queue`, publishing events with `_emit(tipo, **payload)`.
 
-- `download(url, file_format, include_metadata, auto_metadata)` — single item: extracts info → downloads.
+- `download(url, file_format, include_metadata, auto_metadata, options)` — single item: extracts info → downloads.
+  `options` is a `MediaOptions` (quality, clip_start/clip_end, subtitles, chapters, skip_sponsors). For a
+  playlist the clip is dropped and the rest is kept in the listing for `download_selected`.
+- `probe(url)` — link preview, run in its own thread beside any download (it is not a download and does
+  not go through `_start_worker`). Publishes `preview` or `preview_failed`, both carrying the URL: the
+  window ignores a preview for a link the user has already replaced. A failed preview is never `error`.
   Playlist: extracts a quick listing, marks items in the history, and publishes `playlist_listed`; **does not download**.
 - `download_selected(indices)` — second playlist stage: removes requested repeat downloads from the history
   and downloads only the selected indices (`playlist_items`). Uses `discard_listing()` when the user backs out.
@@ -114,7 +139,14 @@ exclusively through a `queue.Queue`, publishing events with `_emit(tipo, **paylo
 - `_base_opts()` — shared listing and download requirements (JS runtime, remote components). Options needed
   by both stages belong here, without duplication.
 - `_build_opts(...)` — yt-dlp options (format, output template, hooks)
-- `_make_progress_hook(...)` — translates yt-dlp progress into queued events
+- `_make_progress_hook(...)` — translates yt-dlp progress into queued events (with `speed`/`eta`;
+  `transfer_text` turns them into "4.2 MB/s · faltam 0:12")
+- **Section download** (`clip.py` + `_build_opts`): `download_range_func` with the chosen range;
+  `force_keyframes_at_cuts` only when the section has an end and lasts ≤ `PRECISE_CUT_SECONDS` (180 s) —
+  longer sections would re-encode a whole film that cancellation cannot interrupt. Start without end goes
+  to the end and never re-encodes. Same rule as the sibling browser extension (zumbue/video-extensao-download).
+- `set_history_path(path)` — enables `history.append_history` at the end of `_run`; without it nothing is
+  recorded (tests do not touch the user's config). History stores path, title, kind, time — **never the URL**.
 - `confident_match(item, candidatos)` — the candidate that needs no review: artist, title **and** duration
   (±5 s) must all match; different versions (live, remix, acoustic) never match. `_auto_apply_metadata` uses
   it after downloading when the user has enabled automatic application.
@@ -137,11 +169,12 @@ exclusively through a `queue.Queue`, publishing events with `_emit(tipo, **paylo
 
 ### 3. UI — `window.py` and `widgets.py`
 
-Consumes the queue through **polling**: `self.root.after(100, self._poll)` reschedules every 100 ms,
-draining the `queue` with `get_nowait()` and dispatching to `_handle(event)`.
+Consumes the queue through **polling**: a `QTimer` fires `_poll` every 100 ms, draining the `queue` with
+`get_nowait()` and dispatching to `_handle(event)`.
 
-> **This is the project's concurrency pattern: queue + polling.** It does not call `root.after(0, callback)`
-> from within a thread — the thread publishes to the queue and the UI reads it independently. When adding
+> **This is the project's concurrency pattern: queue + polling.** No thread touches a widget, emits a Qt
+> signal, or calls `QMetaObject.invokeMethod` — the thread publishes to the queue and the UI reads it
+> independently. When adding
 > thread→UI communication, **use the existing queue**; do not invent a second mechanism.
 
 Downloads run in `threading.Thread(target=self._manager.download, daemon=True)`, stored in
@@ -219,7 +252,7 @@ implementation — rewrite it.
 | 🔴 High | Pure backend helpers | `_valid_url`, `_url_is_playlist`, `_is_playlist_result`, `_count_items` |
 | 🔴 High | Event translation | `ReportingLogger` (failure deduplication, prefix removal) |
 | 🟡 Medium | Option construction | `_build_opts` — format, `outtmpl`, `noplaylist` |
-| 🟢 Low | UI | There is no jsdom here; widget behavior is validated manually |
+| 🟢 Low | UI | Real Qt widgets in `QT_QPA_PLATFORM=offscreen` (`conftest.py`), driven with `QTest`; looks are validated manually |
 
 **Mock only external systems** (yt-dlp, network, FFmpeg). `DownloadManager` is already testable without
 mocks because it has no knowledge of the UI — **this boundary supports the test suite**, making it non-negotiable.
@@ -305,6 +338,28 @@ Conventional Commits: `feat: add quality selection`, `fix: handle private playli
 13. **The source credits all composers in the artist field** ("Jeremy Renner, Brandon Sammons, …"), and
     iTunes finds nothing with the full credit. `search_suggestion` uses only the first name in the source
     credit; artist text from the title ("Queen & David Bowie - …") is kept intact.
+
+14. **The final path comes from the `MoveFiles` hook, and the name is the `pp_key()`.** yt-dlp publishes
+    `MoveFilesAfterDownloadPP` as `"MoveFiles"`, not the class name. The code compared with
+    `"MoveFilesAfterDownload"`, so no file was ever recorded and real MP3s never got the song name — while
+    the suite passed, because the yt-dlp double used the same wrong string. `_MOVE_FILES` asks yt-dlp for
+    the key, and so do the tests. Found only by downloading for real.
+
+15. **Subtitle files go through the progress hook as separate downloads**, with the subtitle's dict as
+    `info_dict` (no `id`). Counted, a video with PT and EN subtitles finished as "3 items downloaded";
+    `_is_subtitle_download` skips them.
+
+16. **A section needs its own filename.** With the full file's name, `final_ext` makes yt-dlp think the
+    whole MP3 on disk is the section and skip it; downloaded later, the section would replace it. The
+    `outtmpl` gets " (trecho 1m00s-2m00s)", and `_rename_downloads` keeps it after the song name.
+
+17. **SponsorBlock and a section do not mix.** Segments come in the full video's timeline; applied to a
+    section they would cut the wrong place, so `skip_sponsors` is ignored when there is a clip.
+    `SponsorBlock` runs `after_filter` (before conversion) and `ModifyChapters` before `FFmpegMetadata`.
+
+18. **On X11 the Qt `xcb` plugin needs `libxcb-cursor`** from the system (`xcb-util-cursor` on Arch,
+    `libxcb-cursor0` on Debian). Without it the window does not open and the error mentions "xcb".
+    `./run.sh` warns about it. Wayland does not need it.
 
 ---
 

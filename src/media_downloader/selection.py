@@ -8,22 +8,22 @@ os indices escolhidos ou o aviso de que a pessoa desistiu.
 
 from typing import Callable
 
-import customtkinter as ctk
-
-from .models import PlaylistEntry
-from .theme import (
-    BG_CARD,
-    BG_DARK,
-    BG_HOVER,
-    BG_INPUT,
-    CLR_ACCENT,
-    CLR_ACCENT_DARK,
-    CLR_BORDER,
-    CLR_MUTED,
-    CLR_TEXT,
-    FONT_FAMILY,
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
-from .widgets import HoverButton
+
+from .clip import format_time
+from .models import PlaylistEntry
+from .theme import CLR_MUTED
+from .widgets import label
 
 
 class PlaylistChoice:
@@ -61,118 +61,120 @@ class PlaylistChoice:
         return "Escolha ao menos um item"
 
 
-def _duration_text(seconds: float | None) -> str:
-    if not seconds:
-        return ""
-    minutes, secs = divmod(int(seconds), 60)
-    return f"{minutes}:{secs:02d}"
-
-
 class PlaylistSelection:
     """Dialogo da escolha. Chama exatamente um dos dois retornos ao fechar."""
 
     def __init__(
-        self, root: ctk.CTk,
+        self, parent: QWidget,
         on_confirm: Callable[[list[int]], None], on_cancel: Callable[[], None],
     ):
-        self._root = root
+        self._parent = parent
         self._on_confirm = on_confirm
         self._on_cancel = on_cancel
-        self._window: ctk.CTkToplevel | None = None
+        self._dialog: QDialog | None = None
 
     def open(self, title: str, entries: list[PlaylistEntry]) -> None:
         choice = PlaylistChoice(entries)
-        window = ctk.CTkToplevel(self._root)
-        window.title("Escolher itens da playlist")
-        window.geometry("720x560")
-        window.minsize(560, 400)
-        window.configure(fg_color=BG_DARK)
-        window.transient(self._root)
-        window.protocol("WM_DELETE_WINDOW", self.cancel)
-        self._window = window
+        dialog = QDialog(self._parent)
+        dialog.setWindowTitle("Escolher itens da playlist")
+        dialog.resize(720, 600)
+        dialog.setMinimumSize(560, 420)
+        # Fechar pelo X da janela e desistir, como "Cancelar".
+        dialog.rejected.connect(self._rejected)
+        self._dialog = dialog
 
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(28, 24, 28, 22)
+        layout.setSpacing(10)
         already = sum(1 for e in entries if e.already_downloaded)
-        ctk.CTkLabel(
-            window, text=title, font=(FONT_FAMILY, 18, "bold"), text_color=CLR_TEXT,
-            anchor="w", wraplength=660, justify="left",
-        ).pack(anchor="w", fill="x", padx=24, pady=(22, 3))
-        ctk.CTkLabel(
-            window,
-            text=(f"{len(entries)} item(s) na playlist"
-                  + (f", {already} ja baixado(s) antes nesta pasta." if already else ".")
-                  + " O que ja foi baixado vem desmarcado; marque para baixar de novo."),
-            font=(FONT_FAMILY, 11), text_color=CLR_MUTED, wraplength=660, justify="left",
-        ).pack(anchor="w", padx=24, pady=(0, 12))
+        layout.addWidget(label(title, "h1", wrap=True))
+        layout.addWidget(label(
+            f"{len(entries)} item(s) na playlist"
+            + (f", {already} já baixado(s) antes nesta pasta." if already else ".")
+            + " O que já foi baixado vem desmarcado; marque para baixar de novo.",
+            "muted", wrap=True))
 
-        actions = ctk.CTkFrame(window, fg_color="transparent")
-        actions.pack(fill="x", padx=24, pady=(0, 8))
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+        layout.addLayout(actions)
 
-        items_frame = ctk.CTkScrollableFrame(window, fg_color=BG_CARD, corner_radius=12)
-        items_frame.pack(fill="both", expand=True, padx=24, pady=(0, 12))
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        body = QWidget()
+        rows = QVBoxLayout(body)
+        rows.setContentsMargins(0, 4, 6, 4)
+        rows.setSpacing(6)
+        scroll.setWidget(body)
+        layout.addWidget(scroll, 1)
 
-        footer = ctk.CTkFrame(window, fg_color="transparent")
-        footer.pack(fill="x", padx=24, pady=(0, 20))
-        confirm_btn = HoverButton(
-            footer, text=choice.confirm_label(), width=200, height=40,
-            font=(FONT_FAMILY, 12, "bold"),
-            base_color=CLR_ACCENT, hover_color=CLR_ACCENT_DARK, press_color="#4036aa",
-            text_color="#ffffff",
-            command=lambda: self._confirm(choice),
-        )
-        confirm_btn.pack(side="right")
-        HoverButton(
-            footer, text="Cancelar", width=120, height=40, font=(FONT_FAMILY, 12),
-            base_color="transparent", hover_color=BG_HOVER, press_color=CLR_BORDER,
-            text_color=CLR_TEXT, border_width=2, border_color=CLR_BORDER,
-            command=self.cancel,
-        ).pack(side="right", padx=(0, 10))
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        cancel_btn = QPushButton("Cancelar")
+        cancel_btn.setObjectName("ghost")
+        cancel_btn.clicked.connect(dialog.reject)
+        confirm_btn = QPushButton(choice.confirm_label())
+        confirm_btn.setObjectName("primary")
+        confirm_btn.setDefault(True)
+        confirm_btn.clicked.connect(lambda: self._confirm(choice))
+        footer.addWidget(cancel_btn)
+        footer.addWidget(confirm_btn)
+        layout.addLayout(footer)
 
-        variables: dict[int, ctk.BooleanVar] = {}
+        boxes: dict[int, QCheckBox] = {}
 
         def refresh() -> None:
-            for index, var in variables.items():
-                var.set(choice.is_selected(index))
-            confirm_btn.configure(
-                text=choice.confirm_label(),
-                state="normal" if choice.can_confirm() else "disabled")
+            for index, box in boxes.items():
+                box.blockSignals(True)
+                box.setChecked(choice.is_selected(index))
+                box.blockSignals(False)
+            confirm_btn.setText(choice.confirm_label())
+            confirm_btn.setEnabled(choice.can_confirm())
 
-        for label, action in (
-            ("So os novos", choice.select_new),
+        for text, action in (
+            ("Só os novos", choice.select_new),
             ("Marcar todos", choice.select_all),
             ("Desmarcar todos", choice.select_none),
         ):
-            HoverButton(
-                actions, text=label, width=130, height=30, font=(FONT_FAMILY, 11),
-                base_color=BG_INPUT, hover_color=BG_HOVER, press_color=CLR_BORDER,
-                text_color=CLR_TEXT,
-                command=lambda action=action: (action(), refresh()),
-            ).pack(side="left", padx=(0, 8))
+            button = QPushButton(text)
+            button.setObjectName("chip")
+            button.clicked.connect(lambda _=False, action=action: (action(), refresh()))
+            actions.addWidget(button)
+        actions.addStretch(1)
 
         for entry in entries:
-            var = ctk.BooleanVar(value=choice.is_selected(entry.index))
-            variables[entry.index] = var
-            details = " · ".join(
-                part for part in (
-                    _duration_text(entry.duration),
-                    "ja baixado" if entry.already_downloaded else "",
-                ) if part)
-            ctk.CTkCheckBox(
-                items_frame,
-                text=f"{entry.index:03d}   {entry.title}" + (f"   ({details})" if details else ""),
-                variable=var, onvalue=True, offvalue=False,
-                font=(FONT_FAMILY, 11),
-                text_color=CLR_MUTED if entry.already_downloaded else CLR_TEXT,
-                fg_color=CLR_ACCENT, hover_color=CLR_ACCENT_DARK,
-                border_color=CLR_BORDER, checkmark_color=CLR_TEXT,
-                command=lambda index=entry.index: (choice.toggle(index), refresh()),
-            ).pack(anchor="w", fill="x", padx=8, pady=3)
+            row = QFrame()
+            row.setObjectName("listRow")
+            line = QHBoxLayout(row)
+            line.setContentsMargins(12, 8, 14, 8)
+            box = QCheckBox(f"{entry.index:03d}   {entry.title}")
+            box.setCursor(Qt.CursorShape.PointingHandCursor)
+            if entry.already_downloaded:
+                box.setStyleSheet(f"color: {CLR_MUTED};")
+            box.toggled.connect(lambda _c, index=entry.index: (choice.toggle(index), refresh()))
+            boxes[entry.index] = box
+            line.addWidget(box, 1)
+            details = " · ".join(part for part in (
+                format_time(entry.duration) if entry.duration else "",
+                "já baixado" if entry.already_downloaded else "",
+            ) if part)
+            if details:
+                line.addWidget(label(details, "small"))
+            rows.addWidget(row)
+        rows.addStretch(1)
 
         refresh()
+        dialog.show()
 
     def _close(self) -> None:
-        if self._window is not None and self._window.winfo_exists():
-            self._window.destroy()
-        self._window = None
+        dialog, self._dialog = self._dialog, None
+        if dialog is not None:
+            dialog.rejected.disconnect(self._rejected)
+            dialog.close()
+            dialog.deleteLater()
+
+    def _rejected(self) -> None:
+        self._close()
+        self._on_cancel()
 
     def _confirm(self, choice: PlaylistChoice) -> None:
         if not choice.can_confirm():
@@ -182,7 +184,7 @@ class PlaylistSelection:
         self._on_confirm(indices)
 
     def is_open(self) -> bool:
-        return self._window is not None
+        return self._dialog is not None
 
     def cancel(self) -> None:
         self._close()
