@@ -75,6 +75,29 @@ WHY IT EXISTS
   The preview runs in a thread and may arrive after the user has replaced the
   link: showing the previous video's thumbnail and duration would make the
   section ruler cut with the wrong duration.
+
+---
+
+SDD — Spec: the link field starts clean and forgets the previous link
+
+CONTRACT
+  - The link field is empty when the app opens and stays empty when the
+    window regains focus, whatever is in the clipboard. A link only enters
+    the field when the user pastes, types, or drops it.
+  - Clearing or replacing the link forgets what the previous preview said:
+    every quality is offered again and the section ruler has no duration.
+
+WHY IT EXISTS
+  The window filled the field from the clipboard every time it became active.
+  The clipboard usually still held the link downloaded last time, so the app
+  opened with an old link the user had to delete before pasting the new one.
+  And after clearing it, 1080p/720p/480p stayed disabled because the old
+  preview's resolutions were never dropped.
+
+BUSINESS RULES
+  - Nothing reads the clipboard on its own; "Colar", Ctrl+V and drag-and-drop
+    are the user's explicit actions and keep working.
+  - Without a preview, nothing is disabled on its behalf.
 """
 
 from collections import deque
@@ -155,6 +178,39 @@ class TestKeyboardAndPageStates:
         app_window._history_empty_action.click()
 
         assert app_window._pages.currentIndex() == 0
+
+
+class TestCleanLinkField:
+    def _preview(self, url):
+        return MediaPreview(url=url, title="Video", duration=245.0, heights=(360,))
+
+    def test_should_open_with_an_empty_link_field_when_the_clipboard_has_a_link(self, qapp):
+        QGuiApplication.clipboard().setText("https://youtu.be/downloaded-last-time")
+
+        main_window = MediaDownloaderApp()
+        qapp.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
+
+        assert main_window.url_entry.text() == ""
+        main_window._poll_timer.stop()
+        main_window.deleteLater()
+
+    def test_should_offer_every_quality_again_when_the_link_is_cleared(self, app_window):
+        url = "https://youtu.be/only-360p"
+        app_window.url_entry.setText(url)
+        app_window._handle({"type": "preview", "url": url, "preview": self._preview(url)})
+
+        app_window.url_entry.clear()
+
+        assert all(chip.isEnabled() for chip in app_window._quality_buttons.values())
+
+    def test_should_forget_the_previous_duration_when_the_link_is_cleared(self, app_window):
+        url = "https://youtu.be/only-360p"
+        app_window.url_entry.setText(url)
+        app_window._handle({"type": "preview", "url": url, "preview": self._preview(url)})
+
+        app_window.url_entry.clear()
+
+        assert app_window.clip_slider.maximum() == 0
 
 
 class TestOpeningTheDownloadsFolder:

@@ -104,7 +104,6 @@ class MediaDownloaderApp(QMainWindow):
         self._selection = PlaylistSelection(
             self, self._download_selected, self._selection_cancelled)
         self._preview: MediaPreview | None = None
-        self._last_clipboard = ""
         self._syncing_clip = False
 
         self._build_ui()
@@ -119,9 +118,6 @@ class MediaDownloaderApp(QMainWindow):
 
         QShortcut(QKeySequence("Ctrl+L"), self, activated=self._focus_url)
         QShortcut(QKeySequence("Ctrl+Return"), self, activated=self.start_download)
-        app = QApplication.instance()
-        if app is not None:
-            app.applicationStateChanged.connect(self._on_app_state)
 
     # ── Layout ────────────────────────────────────────────────────────────────
 
@@ -555,18 +551,6 @@ class MediaDownloaderApp(QMainWindow):
         if text:
             self.url_entry.setText(text)
 
-    def _on_app_state(self, state) -> None:
-        """When returning to the window with a copied link and an empty field, fill it in."""
-        if state != Qt.ApplicationState.ApplicationActive or self.url_entry.text().strip():
-            return
-        if self._thread and self._thread.is_alive():
-            return
-        text = QGuiApplication.clipboard().text().strip()
-        if text and text != self._last_clipboard and self._valid_url(text):
-            self._last_clipboard = text
-            self.url_entry.setText(text)
-            self._set_hint("Link colado da área de transferência.")
-
     def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt API
         if event.mimeData().hasUrls() or event.mimeData().hasText():
             event.acceptProposedAction()
@@ -587,7 +571,11 @@ class MediaDownloaderApp(QMainWindow):
 
     def _on_url_changed(self, text: str) -> None:
         self._set_hint("")
+        # A new link starts from nothing: the previous preview's duration and
+        # resolutions belong to another video.
         self._preview = None
+        self.clip_slider.setMaximum(0)
+        self._update_quality_availability()
         self._update_clip_availability()
         if self._valid_url(text.strip()):
             self._probe_timer.start(_PROBE_DELAY_MS)

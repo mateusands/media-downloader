@@ -5,7 +5,7 @@ Desktop application with a dark graphical interface (PySide6 / Qt 6) for downloa
 ## Features
 
 - **Link preview** — paste (or drag) a link and see the thumbnail, title, channel, duration and available
-  resolutions before downloading; a link copied before switching to the window is filled in automatically
+  resolutions before downloading
 - **Download only a section** — "from minute X to minute Y", with a two-handle ruler or typed times
   (`1:30`, `90`, `1:02:03`). Sections up to 3 minutes are cut on the exact frame; longer ones are cut on
   the nearest keyframe so nothing is re-encoded. A `t=` in a YouTube link becomes the start
