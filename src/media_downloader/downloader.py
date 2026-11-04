@@ -111,6 +111,24 @@ def js_runtimes_for(which: Callable[[str], str | None]) -> dict[str, dict[str, s
     return {"deno": {}}
 
 
+# Since late 2026 YouTube answers "Sign in to confirm you're not a bot" to anonymous
+# requests from this connection; the cookies of a browser where the user is logged
+# in get past it. The first installed browser wins (profile folder present).
+_COOKIE_BROWSERS = (
+    ("brave", ".config/BraveSoftware/Brave-Browser"),
+    ("chrome", ".config/google-chrome"),
+    ("chromium", ".config/chromium"),
+    ("firefox", ".mozilla/firefox"),
+)
+
+
+def cookie_browser_for(home: Path) -> tuple[str] | None:
+    for name, profile in _COOKIE_BROWSERS:
+        if (home / profile).is_dir():
+            return (name,)
+    return None
+
+
 _BEST_VIDEO = "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b"
 VIDEO_QUALITIES = ("best", "1080", "720", "480", "360")
 
@@ -679,6 +697,7 @@ class DownloadManager:
             "ignoreerrors": True,
             "remote_components": ["ejs:github"],
             "js_runtimes": js_runtimes_for(shutil.which),
+            **({"cookiesfrombrowser": browser} if (browser := cookie_browser_for(Path.home())) else {}),
         }
 
     def _extract_info(self, url: str, playlist_mode: bool) -> dict[str, Any]:
