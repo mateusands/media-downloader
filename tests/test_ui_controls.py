@@ -98,6 +98,32 @@ BUSINESS RULES
   - Nothing reads the clipboard on its own; "Colar", Ctrl+V and drag-and-drop
     are the user's explicit actions and keep working.
   - Without a preview, nothing is disabled on its behalf.
+
+---
+
+SDD — Spec: what the user chose is what the download receives
+
+CONTRACT
+  Clicking "Baixar" hands the backend exactly the choices on screen at the
+  moment of the click: format, cover and metadata, automatic application,
+  quality, section, subtitles, chapters, and SponsorBlock.
+
+WHY IT EXISTS
+  `start_download` locked the screen (`_set_busy(True)`) before reading the
+  choices. Reading checks `isEnabled()` so that an unavailable option never
+  counts — and a locked card makes every child report disabled. So every
+  download went out with no section, no subtitles, no chapters, no
+  SponsorBlock, and no cover/metadata: "Baixar só um trecho" downloaded the
+  whole video. The earlier tests read `_media_options()` directly and never
+  went through the click, so they passed.
+
+BUSINESS RULES
+  - The choices are read before anything on screen changes state.
+  - The test goes through the click, the path the user takes.
+  - An option that becomes unavailable is not sent, but keeps the user's
+    choice for when it is available again. `setAvailable(False)` used to
+    switch it off for good: "Aplicar sozinho" lost its default (on) at
+    startup, and subtitles chosen in MP4 were gone after a trip to MP3.
 """
 
 from collections import deque
@@ -211,6 +237,56 @@ class TestCleanLinkField:
         app_window.url_entry.clear()
 
         assert app_window.clip_slider.maximum() == 0
+
+
+class TestChoicesReachTheDownload:
+    def _click_download(self, app_window):
+        sent = []
+        app_window._manager.download = lambda *args: sent.append(args)
+        app_window.start_download()
+        app_window._thread.join()
+        url, file_format, include_metadata, auto_metadata, options = sent[0]
+        return file_format, include_metadata, auto_metadata, options
+
+    def test_should_send_the_section_and_subtitles_when_download_is_clicked(self, app_window):
+        url = "https://youtu.be/long-video"
+        app_window.url_entry.setText(url)
+        app_window._handle({"type": "preview", "url": url, "preview": MediaPreview(
+            url=url, title="Video", duration=273.0, heights=(1080,))})
+        app_window._set_format("mp4")
+        app_window.clip_switch.setChecked(True)
+        app_window.clip_start.setText("1:00")
+        app_window.clip_end.setText("1:30")
+        app_window.subtitles_row.switch.setChecked(True)
+
+        file_format, _, _, options = self._click_download(app_window)
+
+        assert file_format == "mp4"
+        assert (options.clip_start, options.clip_end) == (60, 90)
+        assert options.subtitles is True
+
+    def test_should_send_cover_and_metadata_when_download_is_clicked(self, app_window):
+        app_window.url_entry.setText("https://youtu.be/song")
+        app_window._set_format("mp3")
+        app_window.metadata_row.switch.setChecked(True)
+
+        _, include_metadata, auto_metadata, _ = self._click_download(app_window)
+
+        assert include_metadata is True
+        assert auto_metadata is True
+
+
+class TestUnavailableOptionKeepsTheChoice:
+    def test_should_keep_subtitles_on_when_the_format_goes_to_mp3_and_back(self, app_window):
+        app_window._set_format("mp4")
+        app_window.subtitles_row.switch.setChecked(True)
+
+        app_window._set_format("mp3")
+        unavailable = app_window.subtitles_row.isChecked()
+        app_window._set_format("mp4")
+
+        assert unavailable is False
+        assert app_window.subtitles_row.isChecked() is True
 
 
 class TestOpeningTheDownloadsFolder:

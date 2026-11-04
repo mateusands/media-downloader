@@ -98,7 +98,7 @@ height), 16 (cards). Inner radius ≤ outer radius.
 | Format card (`FormatCard`) | 42 px icon tile · title · subtitle · check. Selected: soft fill, accent border, accent icon. Keyboard focus: light-accent border |
 | Quality chip (`#chip`) | pill; checked = light fill + dark text; disabled when the video does not reach that height, with a tooltip saying why |
 | Range slider (`RangeSlider`) | 6 px track, gradient fill between two 18 px white handles with accent ring, quarter ticks with times. Focus: halo on the active handle |
-| Option row (`OptionRow`) | icon · title · explanation · switch; the whole row toggles. Unavailable: dimmed, switched off, tooltip with the reason |
+| Option row (`OptionRow`) | icon · title · explanation · switch; the whole row toggles. Unavailable: dimmed, drawn off, tooltip with the reason; the user's choice is kept for when it is available again, and is not sent meanwhile |
 | Switch (`ToggleSwitch`) | 48×30 incl. focus halo; on = accent, off = `CLR_SWITCH_OFF` |
 | Primary button (`#primary`) | gradient accent→end, 12 px radius, white text; disabled = flat `BG_HOVER` + muted text |
 | Navigation (`#navButton`) | icon + label; active = soft fill **and** a 3 px accent bar on the left (more than colour) |

@@ -224,7 +224,9 @@ class ToggleSwitch(QAbstractButton):
         painter.setBrush(track)
         painter.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
         knob = rect.height() - 6
-        x = rect.left() + 3 + self._offset * (rect.width() - knob - 6)
+        # Disabled is drawn off whatever the stored choice: it will not be sent.
+        offset = self._offset if self.isEnabled() else 0.0
+        x = rect.left() + 3 + offset * (rect.width() - knob - 6)
         painter.setBrush(QColor(CLR_TEXT if self.isEnabled() else CLR_DISABLED))
         painter.drawEllipse(QRectF(x, rect.top() + 3, knob, knob))
 
@@ -258,10 +260,13 @@ class OptionRow(QFrame):
         self._icon.setPixmap(pixmap(self._icon_name, color, 20))
 
     def setAvailable(self, available: bool, reason: str = "") -> None:
-        """Unavailable turns off and explains — a dimmed switch with no reason looks broken."""
+        """Unavailable looks off and explains why — a dimmed switch with no reason looks broken.
+
+        The choice itself is kept: `isChecked` already ignores a disabled row, and
+        clearing the switch lost the default ("Aplicar sozinho") at startup and the
+        user's subtitles after a trip to MP3.
+        """
         self.setEnabled(available)
-        if not available:
-            self.switch.setChecked(False)
         self.setToolTip("" if available else reason)
         self._title.setStyleSheet("" if available else f"color: {CLR_MUTED};")
         self._refresh_icon(self.switch.isChecked())

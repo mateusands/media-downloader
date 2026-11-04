@@ -753,13 +753,13 @@ class MediaDownloaderApp(QMainWindow):
         if not self._validate_clip():
             return
 
+        # Read the choices before locking the screen: they check isEnabled(), and a
+        # locked card reports every child as disabled, which dropped all of them.
+        choices = (self._format, self.metadata_row.isChecked(),
+                   self.auto_metadata_row.isChecked(), self._media_options())
         self._set_busy(True)
         self._reset_progress("Iniciando...", "Analisando link...")
-        self._start_worker(
-            self._manager.download,
-            url, self._format, self.metadata_row.isChecked(),
-            self.auto_metadata_row.isChecked(), self._media_options(),
-        )
+        self._start_worker(self._manager.download, url, *choices)
 
     def fix_music_folder(self) -> None:
         """Fixes cover art and metadata of MP3 files already on disk."""
