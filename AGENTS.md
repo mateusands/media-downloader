@@ -87,6 +87,7 @@ media-downloader/
     ├── test_download_history.py # history file and what a download records
     ├── test_progress.py         # speed and ETA in progress events
     ├── test_clip_ruler.py       # RangeSlider (two-handle ruler)
+    ├── test_cookie_browser.py   # which installed browser lends its cookies to yt-dlp
     ├── conftest.py              # offscreen Qt app; isolates config and history from the user's
     └── test_ui_controls.py      # activating controls, preview of the current link, review dialogs
 ```
@@ -137,8 +138,8 @@ exclusively through a `queue.Queue`, publishing events with `_emit(event_type, *
   and downloads only the selected indices (`playlist_items`). Uses `discard_listing()` when the user backs out.
 - `cancel()` — the progress hook raises `DownloadCancelled` on the next update; completion arrives as a
   `cancelled` event with the partial summary, never as `error`.
-- `_base_opts()` — shared listing and download requirements (JS runtime, remote components). Options needed
-  by both stages belong here, without duplication.
+- `_base_opts()` — shared listing and download requirements (JS runtime, remote components, the
+  browser cookies from `cookie_browser_for`). Options needed by both stages belong here, without duplication.
 - `_build_opts(...)` — yt-dlp options (format, output template, hooks)
 - `_make_progress_hook(...)` — translates yt-dlp progress into queued events (with `speed`/`eta`;
   `transfer_text` turns them into "4.2 MB/s · faltam 0:12")
@@ -222,6 +223,11 @@ Downloads run in `threading.Thread(target=self._manager.download, daemon=True)`,
 - **Do not log full URLs** in persistent output; they may contain session parameters.
 - **Do not add yt-dlp options that bypass access restrictions.** The tool downloads what the user can
   already access.
+  The user's own browser cookies (`cookiesfrombrowser`, chosen by `cookie_browser_for`) are allowed:
+  they authenticate the user as themselves, so yt-dlp reaches only what that account can already open.
+  YouTube asks anonymous requests to "Sign in to confirm you're not a bot", and the session is the
+  user's answer. Not allowed: someone else's cookies or accounts, shared cookie files, proxies or
+  geo-unblocking to reach blocked content, DRM circumvention, or anything that impersonates another user.
 
 ---
 
@@ -360,6 +366,13 @@ Conventional Commits: `feat: add quality selection`, `fix: handle private playli
 18. **On X11 the Qt `xcb` plugin needs `libxcb-cursor`** from the system (`xcb-util-cursor` on Arch,
     `libxcb-cursor0` on Debian). Without it the window does not open and the error mentions "xcb".
     `./run.sh` warns about it. Wayland does not need it.
+
+19. **Browser cookies follow `XDG_CONFIG_HOME`.** `cookie_browser_for` finds the browser under the home
+    folder, but yt-dlp locates the profile through `XDG_CONFIG_HOME`. Running the app or a harness with
+    that variable pointed elsewhere (to isolate the settings) makes every extraction fail with
+    "failed to load cookies" — the preview shows "Sem prévia" and downloads fail, with nothing wrong in
+    the code. Isolate the settings and history with `set_history_path` and the `conftest.py` patches,
+    not by moving `XDG_CONFIG_HOME`.
 
 ---
 
